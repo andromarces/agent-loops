@@ -370,6 +370,28 @@ test("a repair that changes a shape 1 finding does not match", () => {
   expect(repairedReportMatches(original, repairedResponse, report)).toBe(false);
 });
 
+// Usefulness: verifies a repair cannot move a Blockers value to another label when an absent
+// required label is the only defect, so the relaxation for a moved section never hides a blocker
+// (issue #2015).
+test("a repair that moves a blocker to another label does not match", () => {
+  const original = [
+    "Conclusion: done",
+    "Blockers: tests fail",
+    "Checks: npm test",
+    "Notes: flaky",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: none",
+    "Blockers: none",
+    "Checks: npm test; tests fail",
+    "Notes: flaky",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(false);
+});
+
 // Usefulness: verifies an ordered list (`N. ` at column 0) directly under a label folds like a
 // dash list, and that its sub-items fold at the column where the item text starts, so a worker that
 // mirrors an ordered list from its parent prompt still yields a report (issue #915).

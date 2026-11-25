@@ -64,6 +64,31 @@ const WRAPPED_WHY =
   "Conclusion: done\nWhy: first line\n  second line\nBlockers: none\nChecks: npm test\n* npm run lint";
 const WRAPPED_WHY_REPAIRED =
   "Conclusion: done\nWhy: first line second line\nBlockers: none\nChecks: npm test; npm run lint";
+// The issue #2015 shape: every label but Blockers is present, and a prose lead with a dash list
+// follows Why. The parser folds that section into the Why value.
+const ABSENT_BLOCKERS = [
+  "Conclusion: the setup works.",
+  "",
+  "Why: The profile holds the right values. The check confirms it.",
+  "",
+  "Blocker-free verification detail (setup):",
+  "- positive (key auth): loaded; reached the host.",
+  "- no-ssh control (no key): refused; logged.",
+  "- negative control (bad key): refused; logged.",
+  "",
+  "Checks: node --test passed",
+  "Notes: none",
+  "Deferred: none.",
+].join("\n");
+// The canonical restatement keeps every word but puts the folded section under Checks.
+const ABSENT_BLOCKERS_REPAIRED = [
+  "Conclusion: the setup works.",
+  "Why: The profile holds the right values. The check confirms it.",
+  "Blockers: none",
+  "Checks: node --test passed; Blocker-free verification detail (setup): positive (key auth): loaded; reached the host.; no-ssh control (no key): refused; logged.; negative control (bad key): refused; logged.",
+  "Notes: none",
+  "Deferred: none.",
+].join("\n");
 
 // One shared setup for the whole file. The in-memory Git answer reads top-level files at call
 // time, so the reviewer mutation case still sees its write, and no test starts a Git process.
@@ -454,6 +479,30 @@ test("a repair accepts joined wrapped lines", async () => {
   expect(agent.recorded).toHaveLength(2);
   expect(result.response).toBe(WRAPPED_WHY_REPAIRED);
   expect(result.report).toMatchObject({ why: "first line second line" });
+});
+
+// Usefulness: verifies requirement "a worker response that lacks only the Blockers label yields a
+// non-null report after the repair turn, with Blockers set to none" (issue #2015). The canonical
+// restatement moves the folded section from Why to Checks without losing a word.
+test("a repair recovers a block whose only defect is an absent required label", async () => {
+  const agent = scripted([ABSENT_BLOCKERS, ABSENT_BLOCKERS_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.status).toBe("ok");
+  expect(result.response).toBe(ABSENT_BLOCKERS_REPAIRED);
+  expect(result.report).toMatchObject({
+    conclusion: "the setup works.",
+    why: "The profile holds the right values. The check confirms it.",
+    blockers: "none",
+  });
+  expect(result.reportMissingLabels).toBeUndefined();
 });
 
 // Usefulness: verifies requirement "the policy for a parsed report without a reviewer Checks line or
