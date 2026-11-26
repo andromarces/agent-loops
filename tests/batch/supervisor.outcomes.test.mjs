@@ -1,5 +1,6 @@
-import { readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { expect, test, vi } from "vite-plus/test";
 import { readDecision } from "../../src/batch/decisions.mjs";
 import { loopEntry } from "../../src/batch/loop-records.mjs";
@@ -14,6 +15,7 @@ import {
   fakeGitDeps,
   noNotify,
   preparedFor,
+  roots,
   waitForLaunch,
   waitPrepared,
 } from "./supervisor-helpers.mjs";
@@ -686,6 +688,156 @@ test("batch status shows decision details and completion", async () => {
     expect(status.loops[0].decision.options).toEqual(["resume", "abandon"]);
     expect(status.loops[0].decision.recommended).toBe("resume");
     expect(status.loops[0].decision.state).toBe("pending");
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// A prepared batch on the root that prepareBatch derives, with a runs root outside it so the
+// derived root can become empty.
+async function defaultRootBatch(overrides = {}) {
+  const repo = await batchRepo();
+  const prepared = await preparedFor(repo, [1], { ...overrides, workTreeRoot: undefined });
+  const runsRoot = await mkdtemp(join(tmpdir(), "batch-root-runs-"));
+  roots.push(runsRoot);
+  return { prepared, runsRoot };
+}
+
+// Usefulness: a completed batch leaves no empty default root beside the repository (issue #2022).
+test("a completed batch removes the empty default work-tree root", async () => {
+  const { prepared, runsRoot } = await defaultRootBatch();
+  await mkdir(prepared.workTreeRoot, { recursive: true });
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(summary.status).toBe("completed");
+    await expect(stat(prepared.workTreeRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: the same root removal runs when the batch reaches failed, not only completed.
+test("a failed batch removes the empty default work-tree root", async () => {
+  const { prepared, runsRoot } = await defaultRootBatch();
+  await mkdir(prepared.workTreeRoot, { recursive: true });
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        createWorkTree: async () => {
+          throw new Error("the base branch is gone");
+        },
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(exitCode).toBe(1);
+    expect(summary.status).toBe("failed");
+    await expect(stat(prepared.workTreeRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: the removal is a no-op while a kept loop work tree holds the default root.
+test("a kept loop work tree keeps the default work-tree root", async () => {
+  const { prepared, runsRoot } = await defaultRootBatch();
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        createWorkTree: async ({ workTree, branch }) => {
+          await mkdir(workTree, { recursive: true });
+          await writeFile(join(workTree, "kept.txt"), "kept\n");
+          return { path: workTree, canonicalPath: workTree, dev: "1", ino: "1", branch };
+        },
+        cleanupLoop: async () => ({ removed: false, reason: "the work tree is not clean" }),
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.status).toBe("completed");
+    expect((await stat(join(prepared.workTreeRoot, "issue-1", "kept.txt"))).isFile()).toBe(true);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a root the user passed is never removed, empty or holding an entry.
+test("a root passed with --work-tree-root stays empty or holding an entry", async () => {
+  const repo = await batchRepo();
+  const runsRoot = await mkdtemp(join(tmpdir(), "batch-root-runs-"));
+  roots.push(runsRoot);
+  const empty = await preparedFor(repo, [1]);
+  const holds = await preparedFor(repo, [2]);
+  await writeFile(join(holds.workTreeRoot, "owner-file.txt"), "kept\n");
+  try {
+    const statuses = [];
+    for (const prepared of [empty, holds]) {
+      const { summary } = await runBatch({
+        prepared,
+        runsRoot,
+        gh: fakeGh(),
+        deps: {
+          ...fakeGitDeps,
+          notifier: noNotify,
+          spawn: childDouble().spawn,
+          installSignal: false,
+        },
+      });
+      statuses.push(summary.status);
+    }
+    expect(statuses).toEqual(["completed", "completed"]);
+    expect((await stat(empty.workTreeRoot)).isDirectory()).toBe(true);
+    expect((await stat(join(holds.workTreeRoot, "owner-file.txt"))).isFile()).toBe(true);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: CI spells the temp path in another form (a Windows short name or a macOS /var
+// link), so the root match resolves both spellings and still removes the default root.
+test("a default work-tree root spelled through a linked parent is removed", async () => {
+  const { prepared, runsRoot } = await defaultRootBatch();
+  const realRoot = prepared.workTreeRoot;
+  const linkBase = await mkdtemp(join(tmpdir(), "batch-root-link-"));
+  roots.push(linkBase);
+  const linkedParent = join(linkBase, "parent");
+  await symlink(dirname(realRoot), linkedParent, process.platform === "win32" ? "junction" : "dir");
+  await mkdir(realRoot, { recursive: true });
+  try {
+    const { summary } = await runBatch({
+      prepared: { ...prepared, workTreeRoot: join(linkedParent, basename(realRoot)) },
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(summary.status).toBe("completed");
+    await expect(stat(realRoot)).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
     await cleanupRepo();
   }

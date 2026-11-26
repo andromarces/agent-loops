@@ -1,9 +1,9 @@
 // The one foreground supervisor of a batch (ADR 0106 decisions 1, 4, 5, 6, 9, 10, 12). It launches
 // one headless child per item, prints progress on stderr, and returns one summary for stdout.
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { canonicalPath } from "../lib/canonical-path.mjs";
+import { canonicalPath, samePath } from "../lib/canonical-path.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "../lib/checks/gh-api.mjs";
 import { boundedRunner } from "../lib/checks/bounded-call.mjs";
 import { declaredPrFromTranscript, undeclaredPrFromTranscript } from "../lib/gate.mjs";
@@ -15,6 +15,7 @@ import {
   startTimeCache,
 } from "../lib/process-identity.mjs";
 import { logError, logWarn } from "../lib/log.mjs";
+import { removeEmptyDirectory } from "./audit-store.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 import { readGhJson } from "./gh-read.mjs";
 import { createOwnerDecisions, readAnswer, readDecision } from "./decisions.mjs";
@@ -310,6 +311,26 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   }
   gh = boundedRunner(gh, deps.ghTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS, controller.signal);
 
+  // The default work-tree root of a batch, derived from the manifest so a resume names it too.
+  const defaultWorkTreeRoot = () =>
+    join(dirname(manifest.repo), `${basename(manifest.repo)}-batch-${manifest.id}`);
+
+  // Removes the batch root only when the batch ran on the default root and it is empty. The
+  // recorded root can be spelled through a link, as a macOS /var path or a Windows short-name
+  // temp path is, so both paths are canonicalised before they are compared. A root the user
+  // passed with --work-tree-root is not the derived default and stays.
+  const removeDefaultWorkTreeRoot = async () => {
+    if (typeof manifest.repo !== "string" || typeof manifest.workTreeRoot !== "string") return;
+    const root = manifest.workTreeRoot;
+    if (!samePath(await canonicalPath(root), await canonicalPath(defaultWorkTreeRoot()))) return;
+    const removal = await removeEmptyDirectory(root);
+    if (removal.removed) {
+      progress(`batch ${manifest.id}: removed the empty work-tree root`);
+    } else if (removal.reason !== null) {
+      logWarn(`batch ${manifest.id}: kept the work-tree root: ${removal.reason}`);
+    }
+  };
+
   // Every path that ends the batch uses this finalization.
   // A resume after an answer reports the same status, summary, exit code, and one completion
   // notification.
@@ -354,6 +375,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         }))
       ).manifest;
     }
+    if (complete) await removeDefaultWorkTreeRoot();
     return {
       exitCode: exitCodeOf(manifest, loops),
       summary: summaryOf(
