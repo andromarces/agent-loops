@@ -280,7 +280,7 @@ test("opencode starts a bold lone heading part on its own line", async () => {
   });
 });
 
-// Usefulness: verifies the lone heading rule waits for the joined text to end in a non-whitespace
+// Usefulness: verifies the lone heading rule waits for the joined text to end in a non-word
 // character, so a heading after whitespace keeps main's glue (issue #2023 decision).
 test("opencode keeps main's glue for a lone heading part after whitespace", async () => {
   const parts = ["Conclusion\nThe change is small. ", "Why\nreason here"];
@@ -329,6 +329,65 @@ test("opencode starts a part that opens a label line on its own line", async () 
     notes: null,
     deferred: null,
   });
+});
+
+// Usefulness: verifies a heading part that follows a word keeps main's split-guard refusal, so an
+// unidentified accept from two parts still refuses instead of returning a report (issue #2023
+// review, blocker 1).
+test("opencode keeps main's guard result for a heading part after a word", async () => {
+  const parts = [
+    "Conclusion: Preliminary review.\nWhy: Initial checks passed.\nBlockers: none\nChecks: ok",
+    "Conclusion\nFinal review passed.\nWhy: The fix works.\nBlockers: none\nChecks: ok\nVerdict: accept",
+  ];
+
+  const error = await runWithEvents(...parts.map((part) => textEvent(part))).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(error.message.endsWith(parts.join(""))).toBe(true);
+});
+
+// Usefulness: verifies a part that opens with a heading word inside a word stays glued, so an
+// arbitrary delta that starts mid-word keeps main's accepted report instead of throwing (issue
+// #2023 review, blocker 2).
+test("opencode keeps main's mid-word join for a heading word in a later part", async () => {
+  const parts = [
+    "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: passed\nVerdict: accept\n\nSee foot",
+    "notes\nfor details.",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part)));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseVerdict(response)).toBe("accept");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: "passed",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a part that is only the plain heading starts its own line after whitespace,
+// as main joins it, so the docs do not describe that case as glued (issue #2023 review, blocker 3).
+test("opencode starts a plain lone heading whole part as main does after whitespace", async () => {
+  const parts = ["Working on it. ", "Why"];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe("Working on it. \nWhy");
+});
+
+// Usefulness: verifies a bold heading part with more text stays glued after whitespace, as main
+// joins it, so the docs state the whitespace condition (issue #2023 review, blocker 3).
+test("opencode keeps a bold heading part with more text glued after whitespace", async () => {
+  const parts = ["Working on it. ", "**Why**\nreason here"];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe("Working on it. **Why**\nreason here");
 });
 
 // Usefulness: verifies a part that continues a sentence gains no line break, so a mid-sentence

@@ -1056,8 +1056,8 @@ function appendToLabel(label, text) {
  * The report label name of a column-0 heading line, plain or bold, or null when the line holds no
  * heading. Only the six report labels gain this form. An adapter that splits or joins response text
  * uses it: the OpenCode join starts a part on its own line when this recognizes the part's first
- * line and the joined text so far ends in a non-whitespace character, so both heading forms split
- * alike.
+ * line and the joined text so far ends in a character that is neither whitespace nor a letter,
+ * digit, or underscore.
  * @param {string} line
  * @returns {string | null}
  */

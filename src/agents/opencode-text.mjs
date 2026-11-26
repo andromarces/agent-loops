@@ -29,9 +29,11 @@ const ERROR_TEXT_LIMIT = 4000;
 /**
  * Joins the text parts of a turn into one response. Parts group into messages by `part.messageID`
  * (parts without a valid id form one unidentified message). A part glues to the one before it,
- * except that a part opening a report label or a lone report heading starts its own line, and a
- * new message starts its own line. The last message that holds a closing block attempt governs
- * alone: earlier attempt-holding messages drop, messages without an attempt stay.
+ * except that a part opening a report label line starts its own line, and a part whose first line
+ * is a lone report heading starts its own line when the text so far ends in a character that is
+ * neither whitespace nor a letter, digit, or underscore; a new message starts its own line.
+ * The last message that holds a closing block attempt governs alone: earlier
+ * attempt-holding messages drop, messages without an attempt stay.
  * The error text is redacted (ADR 0017) and bounded to its last 4000 code units. A later
  * redaction pass with a different environment can grow it past that bound.
  * @throws {Error} when two attempt-holding messages interleave in the stream, or when the
@@ -175,8 +177,12 @@ function labelLinePartCount(parts) {
   return touched.size;
 }
 
+// A heading part starts its own line only after a character that is neither whitespace nor a word
+// character, so a part that opens mid-word (`foot` then `notes`) stays glued as main joins it.
+const HEADING_BREAK = /[^\s\p{L}\p{N}_]$/u;
+
 function joinPart(text, part) {
-  const heading = /\S$/.test(text) && reportHeadingName(part.split("\n", 1)[0]) !== null;
+  const heading = HEADING_BREAK.test(text) && reportHeadingName(part.split("\n", 1)[0]) !== null;
   return (LABEL_LINE.test(part) || heading) && !text.endsWith("\n")
     ? `${text}\n${part}`
     : `${text}${part}`;
