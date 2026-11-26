@@ -2591,6 +2591,101 @@ test("parseReportBlock reads prose under a bold heading label", () => {
   expect(missingRequiredReportLabels(response)).toEqual([]);
 });
 
+// Usefulness: verifies an ordered list after prose under a bold heading leaves the unlabeled
+// start where the plain heading leaves it, so the missing-label diagnosis matches (issue #2020
+// review, ADR 0167). No other test compares a bold heading against the plain one.
+test("parseReportBlock places a bold heading above prose and an ordered list as the plain heading", () => {
+  const bold = [
+    "Narration.",
+    "",
+    "**Why**",
+    "The suite passed.",
+    "1. Unit tests passed.",
+    "",
+    "Why: ok",
+    "Blockers: none",
+  ].join("\n");
+  const plain = bold.replace("**Why**", "Why");
+
+  expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
+  expect(missingRequiredReportLabels(bold)).toEqual(missingRequiredReportLabels(plain));
+  expect(parseReportBlock(bold)).toBeNull();
+  expect(missingRequiredReportLabels(bold)).toEqual(["Conclusion"]);
+});
+
+// Usefulness: verifies a quoted line under a bold heading keeps the plain heading's result, so the
+// bold form does not turn prose before the block into a report (issue #2020 review).
+test("parseReportBlock drops a quoted line under a bold heading as the plain heading does", () => {
+  const bold = [
+    "Narration.",
+    "**Checks**",
+    "> Unit tests passed.",
+    "Why: ok",
+    "Blockers: none",
+    "Verdict: accept",
+  ].join("\n");
+  const plain = bold.replace("**Checks**", "Checks");
+
+  expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
+  expect(parseReportBlock(bold)).toBeNull();
+  expect(missingRequiredReportLabels(bold)).toEqual(missingRequiredReportLabels(plain));
+  expect(acceptanceFailure(bold, parseReportBlock(bold))).toBe(
+    acceptanceFailure(plain, parseReportBlock(plain)),
+  );
+});
+
+// Usefulness: verifies a bold heading above prose with a Notes list and a duplicate Notes label
+// falls back to raw lines as the plain heading does, so the missing-Why diagnosis and the
+// copied-task check match (issue #2020 review).
+test("parseReportBlock matches the plain heading when a bold heading block falls back to raw lines", () => {
+  const bold = [
+    "**Why**",
+    "The suite passed.",
+    "Notes:",
+    "- first",
+    "Notes: second",
+    "Blockers: none",
+  ].join("\n");
+  const plain = bold.replace("**Why**", "Why");
+  const task = "Conclusion: done\nWhy: The suite passed.\nBlockers: none";
+
+  expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
+  expect(missingRequiredReportLabels(bold)).toEqual(missingRequiredReportLabels(plain));
+  expect(missingRequiredReportLabels(bold)).toEqual(["Why"]);
+  expect(copiedTaskReportLabels(parseReportBlock(bold), task)).toEqual(
+    copiedTaskReportLabels(parseReportBlock(plain), task),
+  );
+});
+
+// Usefulness: verifies the repair matcher reads a bold heading with prose, a dash item, a duplicate
+// Why label, and an empty Notes label as the plain heading does, including the raw-line fallback of
+// ADR 0169 (issue #2020 review).
+test("repairedReportMatches reads a bold heading as the plain heading on a fallback block", () => {
+  const bold = [
+    "**Why**",
+    "The suite passed.",
+    "- a",
+    "Why: duplicate",
+    "Conclusion: done",
+    "Notes:",
+    "Blockers: none",
+  ].join("\n");
+  const plain = bold.replace("**Why**", "Why");
+  const repaired = "Conclusion: done\nWhy: none\nBlockers: none";
+  const report = parseReportBlock(repaired);
+  const task = "Conclusion: done\nWhy: The suite passed.\nBlockers: none";
+
+  expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
+  expect(missingRequiredReportLabels(bold)).toEqual(missingRequiredReportLabels(plain));
+  expect(copiedTaskReportLabels(parseReportBlock(bold), task)).toEqual(
+    copiedTaskReportLabels(parseReportBlock(plain), task),
+  );
+  expect(repairedReportMatches(bold, repaired, report)).toBe(
+    repairedReportMatches(plain, repaired, report),
+  );
+  expect(repairedReportMatches(bold, repaired, report)).toBe(false);
+});
+
 // Usefulness: verifies the exact issue #1989 shape parses, so no other test needs the full block.
 test("parseReportBlock reads the issue #1989 plain heading labels", () => {
   const response = [
