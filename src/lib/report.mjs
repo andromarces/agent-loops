@@ -30,7 +30,7 @@ const LABEL_PATTERN_BY_KEY = new Map(
 // A column-0 label line whose name and colon sit inside `**...**`, for example `**Why:** text`.
 // Only the six report labels gain this form, so a bold lead with another name stays text.
 const BOLD_LABEL = `\\*\\*(?:${LABEL_NAMES}):\\*\\*`;
-const BOLD_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES}):\\*\\*(.*)$`, "i");
+export const BOLD_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES}):\\*\\*(.*)$`, "i");
 
 // A column-0 line that holds only a label name, for example `Conclusion`, or only `**Label**`, for
 // example `**Conclusion**`, with optional trailing whitespace. Only the six report labels gain
@@ -49,7 +49,7 @@ const CONCLUSION_START_LINE = /^(?:Conclusion(?::|\s*$)|\*\*Conclusion\*\*\s*$)/
 const KNOWN_LABEL_LINE = new RegExp(`^(?:(?:${LABEL_NAMES}|Verdict):|${BOLD_LABEL})`, "i");
 
 // A line that opens a plain report label at column 0.
-const PLAIN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
+export const PLAIN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
 
 /**
  * True when `line` opens a known report label or a plain `Verdict` line at column 0, plain or bold.
@@ -58,7 +58,7 @@ const PLAIN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
  * @param {boolean} [fenced]
  * @returns {boolean}
  */
-function isKnownLabelLine(line, fenced = false) {
+export function isKnownLabelLine(line, fenced = false) {
   return !fenced && KNOWN_LABEL_LINE.test(line);
 }
 
@@ -1055,7 +1055,9 @@ function appendToLabel(label, text) {
 /**
  * The report label name of a column-0 heading line, plain or bold, or null when the line holds no
  * heading. Only the six report labels gain this form. An adapter that splits or joins response text
- * uses it, so both heading forms split alike.
+ * uses it: when the trimmed join of origin/main gives a null report, the OpenCode join starts a
+ * part on its own line if this recognizes the part's first line, the text so far ends in a
+ * non-whitespace character, and a later unfenced line opens a report label, plain or bold.
  * @param {string} line
  * @returns {string | null}
  */

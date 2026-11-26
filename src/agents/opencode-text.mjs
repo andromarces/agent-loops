@@ -1,10 +1,13 @@
 import { redactEnvSecrets } from "../lib/redact.mjs";
 import {
+  BOLD_LABEL_LINE,
+  PLAIN_LABEL_LINE,
   REPORT_LABEL_NAMES,
   fencedLines,
   guardVerdict,
   hasClosingBlockAttempt,
   leadingRequiredLabelStart,
+  parseReportBlock,
   reportHeadingName,
 } from "../lib/report.mjs";
 import { isNonEmptyString } from "./shared.mjs";
@@ -29,9 +32,13 @@ const ERROR_TEXT_LIMIT = 4000;
 /**
  * Joins the text parts of a turn into one response. Parts group into messages by `part.messageID`
  * (parts without a valid id form one unidentified message). A part glues to the one before it,
- * except that a part opening a report label starts its own line, and a new message
- * starts its own line. The last message that holds a closing block attempt governs
- * alone: earlier attempt-holding messages drop, messages without an attempt stay.
+ * except that a part opening a report label line starts its own line, and a new message starts its
+ * own line. That join is returned unchanged when its trimmed form gives a report. Otherwise a
+ * part whose first line is a lone report heading starts its own line when the text so far ends in
+ * a non-whitespace character and a later unfenced line opens a report label, plain or bold.
+ * The last message that holds a closing block attempt governs alone: earlier
+ * attempt-holding messages drop, messages without an attempt stay. The split guard reads
+ * origin/main's join, so its result never changes.
  * The error text is redacted (ADR 0017) and bounded to its last 4000 code units. A later
  * redaction pass with a different environment can grow it past that bound.
  * @throws {Error} when two attempt-holding messages interleave in the stream, or when the
@@ -63,7 +70,7 @@ export function joinTextParts(events) {
   const governing = attempts.at(-1);
   if (
     governing?.unidentified &&
-    guardVerdict(joinMessages([governing])) === "accept" &&
+    guardVerdict(joinMessages([governing], mainJoinPart)) === "accept" &&
     labelLinePartCount(projectBoldHeadings(governing.parts)) > 1
   ) {
     throw boundedError(UNIDENTIFIED_MESSAGE, messages);
@@ -71,7 +78,9 @@ export function joinTextParts(events) {
 
   const dropped = new Set(attempts);
   dropped.delete(governing);
-  return joinMessages(messages.filter((group) => !dropped.has(group)));
+  const kept = messages.filter((group) => !dropped.has(group));
+  const mainText = joinMessages(kept, mainJoinPart);
+  return parseReportBlock(mainText.trim()) === null ? joinMessages(kept) : mainText;
 }
 
 /**
@@ -81,7 +90,7 @@ export function joinTextParts(events) {
  * states the cut.
  */
 function boundedError(cause, messages) {
-  const text = redactEnvSecrets(joinMessages(messages));
+  const text = redactEnvSecrets(joinMessages(messages, mainJoinPart));
   if (text.length <= ERROR_TEXT_LIMIT) return new Error(`${cause}\n${text}`);
   let tail = text.slice(-ERROR_TEXT_LIMIT);
   if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1);
@@ -89,11 +98,11 @@ function boundedError(cause, messages) {
   return new Error(`${cause}\n${note}\n${tail}`);
 }
 
-function joinMessages(messages) {
+function joinMessages(messages, join = joinPart) {
   return messages.reduce((text, { parts }) => {
     const opening = parts.join("");
     const breaks = text && opening && !text.endsWith("\n");
-    return parts.reduce(joinPart, breaks ? `${text}\n` : text);
+    return parts.reduce(join, breaks ? `${text}\n` : text);
   }, "");
 }
 
@@ -108,7 +117,7 @@ function joinMessages(messages) {
 function projectBoldHeadings(parts) {
   const spans = [];
   const text = parts.reduce((joined, part) => {
-    const next = joinPart(joined, part);
+    const next = mainJoinPart(joined, part);
     spans.push([next.length - part.length, next.length]);
     return next;
   }, "");
@@ -146,7 +155,7 @@ function projectBoldHeadings(parts) {
 function labelLinePartCount(parts) {
   const spans = [];
   const text = parts.reduce((joined, part) => {
-    const next = joinPart(joined, part);
+    const next = mainJoinPart(joined, part);
     spans.push([next.length - part.length, next.length]);
     return next;
   }, "");
@@ -175,6 +184,32 @@ function labelLinePartCount(parts) {
   return touched.size;
 }
 
-function joinPart(text, part) {
+// The join of origin/main, which the split guard reads, so its result never changes.
+function mainJoinPart(text, part) {
   return LABEL_LINE.test(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
+}
+
+// True when a line after the first opens a report label, plain or bold, outside a fence. The fence
+// status comes from the text so far plus the part, so an opener in an earlier part counts too.
+function hasLaterReportLabelLine(text, part) {
+  const partLines = part.split(/\r?\n/);
+  const lines = (text + part).split(/\r?\n/);
+  const fenced = fencedLines(lines);
+  const first = lines.length - partLines.length;
+  return partLines
+    .slice(1)
+    .some(
+      (line, index) =>
+        !fenced[first + index + 1] && (PLAIN_LABEL_LINE.test(line) || BOLD_LABEL_LINE.test(line)),
+    );
+}
+
+function joinPart(text, part) {
+  const heading =
+    /\S$/.test(text) &&
+    reportHeadingName(part.split(/\r?\n/, 1)[0]) !== null &&
+    hasLaterReportLabelLine(text, part);
+  return (LABEL_LINE.test(part) || heading) && !text.endsWith("\n")
+    ? `${text}\n${part}`
+    : `${text}${part}`;
 }

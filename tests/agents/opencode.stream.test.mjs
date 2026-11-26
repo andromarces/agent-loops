@@ -238,6 +238,323 @@ test("opencode joins a split inline bold heading as main joins it", async () => 
   });
 });
 
+// Usefulness: verifies a part that opens with the lone heading `Why` after prose starts its own
+// line, so the joined response matches the same text in one part and the report parses (issue #2023).
+test("opencode starts a plain lone heading part on its own line", async () => {
+  const parts = [
+    "Conclusion\nThe change is small.",
+    "Why\nreason here\nBlockers: none\nChecks: ok",
+  ];
+  const split = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+  const single = await runWithText(parts.join("\n"));
+
+  expect(split).toBe(single);
+  expect(parseReportBlock(split)).toEqual({
+    conclusion: "The change is small.",
+    why: "reason here",
+    blockers: "none",
+    checks: "ok",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a part that opens with the lone bold heading `**Why**` after prose starts its
+// own line, so the report parses as the one-part text does (issue #2023, the #2020 known limit).
+test("opencode starts a bold lone heading part on its own line", async () => {
+  const parts = [
+    "Conclusion\nThe change is small.",
+    "**Why**\nreason here\nBlockers: none\nChecks: ok",
+  ];
+  const split = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+  const single = await runWithText(parts.join("\n"));
+
+  expect(split).toBe(single);
+  expect(parseReportBlock(split)).toEqual({
+    conclusion: "The change is small.",
+    why: "reason here",
+    blockers: "none",
+    checks: "ok",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies the lone heading rule waits for the joined text to end in a non-word
+// character, so a heading after whitespace keeps main's glue (issue #2023 decision).
+test("opencode keeps main's glue for a lone heading part after whitespace", async () => {
+  const parts = ["Conclusion\nThe change is small. ", "Why\nreason here"];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies a report heading word inside prose gains no line break, so the sentence stays
+// glued as main joins it (issue #2023 decision).
+test("opencode keeps a heading word inside prose as main joins it", async () => {
+  const parts = ["Conclusion\ndone.", "The Why is explained in the notes."];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+});
+
+// Usefulness: verifies the `Verdict:` exclusion still keeps a reviewer verdict glued to the prose
+// before it, so a verdict the model never wrote at column 0 stays unknown as on main (issue #2023).
+test("opencode keeps a Verdict line glued as main joins it", async () => {
+  const parts = ["Conclusion: done\nWhy: ok\nBlockers: none", "Verdict: accept"];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseVerdict(response)).toBe("unknown");
+});
+
+// Usefulness: verifies a part that opens a report label line still starts its own line, so the
+// existing LABEL_LINE rule keeps its result beside the new heading rule (issue #2023).
+test("opencode starts a part that opens a label line on its own line", async () => {
+  const response = await runWithEvents(
+    textEvent("Conclusion: done", "msg-1"),
+    textEvent("Why: ok\nBlockers: none", "msg-1"),
+  );
+
+  expect(response).toBe("Conclusion: done\nWhy: ok\nBlockers: none");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a heading part that follows a word keeps main's split-guard refusal, so an
+// unidentified accept from two parts still refuses instead of returning a report (issue #2023
+// review, blocker 1).
+test("opencode keeps main's guard result for a heading part after a word", async () => {
+  const parts = [
+    "Conclusion: Preliminary review.\nWhy: Initial checks passed.\nBlockers: none\nChecks: ok",
+    "Conclusion\nFinal review passed.\nWhy: The fix works.\nBlockers: none\nChecks: ok\nVerdict: accept",
+  ];
+
+  const error = await runWithEvents(...parts.map((part) => textEvent(part))).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(error.message.endsWith(parts.join(""))).toBe(true);
+});
+
+// Usefulness: verifies a part that opens with a heading word inside a word stays glued, so an
+// arbitrary delta that starts mid-word keeps main's accepted report instead of throwing (issue
+// #2023 review, blocker 2).
+test("opencode keeps main's mid-word join for a heading word in a later part", async () => {
+  const parts = [
+    "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: passed\nVerdict: accept\n\nSee foot",
+    "notes\nfor details.",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part)));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseVerdict(response)).toBe("accept");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: "passed",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a part that is only the plain heading starts its own line after whitespace,
+// as main joins it, so the docs do not describe that case as glued (issue #2023 review, blocker 3).
+test("opencode starts a plain lone heading whole part as main does after whitespace", async () => {
+  const parts = ["Working on it. ", "Why"];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe("Working on it. \nWhy");
+});
+
+// Usefulness: verifies a bold heading part with more text stays glued after whitespace, as main
+// joins it, so the docs state the whitespace condition (issue #2023 review, blocker 3).
+test("opencode keeps a bold heading part with more text glued after whitespace", async () => {
+  const parts = ["Working on it. ", "**Why**\nreason here"];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe("Working on it. **Why**\nreason here");
+});
+
+// Usefulness: verifies a heading part after a period keeps main's split-guard refusal, so the guard
+// result stays as on origin/main whatever the report join does (issue #2023 review).
+test("opencode keeps main's guard result for a heading part after a period", async () => {
+  const parts = [
+    "Conclusion: Preliminary review.\nWhy: Initial checks passed.\nBlockers: none\nChecks: ok.",
+    "Conclusion\nFinal review passed.\nWhy: The fix works.\nBlockers: none\nChecks: ok\nVerdict: accept",
+  ];
+
+  const error = await runWithEvents(...parts.map((part) => textEvent(part))).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(error.message.endsWith(parts.join(""))).toBe(true);
+});
+
+// Usefulness: verifies a part that opens with `notes` inside `release-notes` stays glued, because
+// the part holds no later report label line, so main's accepted report survives (issue #2023
+// review).
+test("opencode keeps main's join for a part that starts at a hyphenated word", async () => {
+  const parts = [
+    "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: passed\nVerdict: accept\n\nSee release-",
+    "notes\nfor details.",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part)));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseVerdict(response)).toBe("accept");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: "passed",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a heading part after a non-ASCII number starts its own line when a later line
+// opens a report label, so the report parses as the one-part text does (issue #2023 review).
+test("opencode starts a heading part after a non-ASCII number", async () => {
+  const parts = [
+    "Conclusion\nThe share is ½",
+    "Why\nIt is one of two.\nBlockers: none\nChecks: ok",
+  ];
+
+  const split = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+  const single = await runWithText(parts.join("\n"));
+
+  expect(split).toBe(single);
+  expect(parseReportBlock(split)).toEqual({
+    conclusion: "The share is ½",
+    why: "It is one of two.",
+    blockers: "none",
+    checks: "ok",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a rewritten join never runs when main's join already gives a report, so a
+// glued unknown verdict stays unknown and acceptance still refuses (issue #2023 review, blocker 1).
+test("opencode keeps main's unknown verdict when a report already parses", async () => {
+  const parts = [
+    "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: passed\nVerdict: accept",
+    "Notes\nMore detail.\nDeferred: none",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part)));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseVerdict(response)).toBe("unknown");
+  expect(acceptanceFailure(response)).toBe("verdict");
+});
+
+// Usefulness: verifies a label line inside a fence never triggers the heading split, so a part that
+// starts mid-word keeps main's join (issue #2023 review, blocker 2).
+test("opencode keeps a fenced label line from triggering a split", async () => {
+  const parts = [
+    "See the release-",
+    "notes\nThe file contains this example.\n~~~text\nChecks: ok\n~~~",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies a Verdict line is not the trigger when main's join already gives a report, so
+// the response stays main's join (issue #2023 review, blocker 3).
+test("opencode keeps main's join when a Verdict line is the only later label", async () => {
+  const parts = [
+    "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: passed",
+    "Notes\nMore detail.\nVerdict: accept",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: "passedNotes",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a Verdict line never triggers the heading split when main's join is null, so
+// the trigger names a report label line only (issue #2023 review, blocker 3).
+test("opencode does not count a Verdict line as the heading trigger", async () => {
+  const parts = ["Conclusion\nThe change is small.", "Why\nreason here\nVerdict: accept"];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies the main-report decision reads the trimmed text the adapter parses, so a
+// stream that already parses on main keeps its conclusion (issue #2023 review, blocker A).
+test("opencode decides the main report on the trimmed main join", async () => {
+  const parts = [
+    "  Conclusion: done.",
+    "Notes\nWhy: ok\nBlockers: none\nChecks: passed\nVerdict: accept",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join("").trim());
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done.Notes",
+    why: "ok",
+    blockers: "none",
+    checks: "passed",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies CRLF parts split lines as the parser does, so a bold label line after a CRLF
+// boundary triggers the split and the CRLF stream parses as the one-part text (issue #2023 review,
+// blocker B).
+test("opencode splits a CRLF heading part as the one-part CRLF text", async () => {
+  const parts = [
+    "Conclusion\r\nThe change is small.",
+    "**Why**\r\nreason here\r\n**Blockers:** none\r\n**Checks:** ok\r\n",
+  ];
+
+  const split = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+  const single = await runWithText(parts.join("\n"));
+
+  expect(split).toBe(single);
+  expect(parseReportBlock(split)).toEqual({
+    conclusion: "The change is small.",
+    why: "reason here",
+    blockers: "none",
+    checks: "ok",
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies a part that continues a sentence gains no line break, so a mid-sentence
 // split keeps the prose intact, the envelope still carries the parsed report, and an unconditional
 // newline join cannot pass (issue #316).
