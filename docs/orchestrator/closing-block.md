@@ -60,9 +60,9 @@ A paragraph holds a bold lead and more prose on the same line. With its own dash
 labels it makes the block unparseable: put the paragraph and its list under one label.
 
 Put quoted or multi-paragraph text before the closing block, not inside it, and refer to it from one
-label with a short line. The label keeps the short result that the parent reads. A quoted paragraph
-alone is dropped from the block, and a dash list directly under a quoted prose line makes the block
-unparseable.
+label with a short line. The label keeps the short result that the parent reads. Under a `Label:`
+line, a quoted paragraph alone supplies no value, and a dash list directly under a quoted prose
+line makes the block unparseable. A quoted line under a lone heading supplies the value instead.
 
 A column-0 label line whose name and colon sit inside `**...**` is that label, for example
 `**Blockers:** none`. Only the six report labels gain this form, so `**Rule:**`
@@ -71,7 +71,7 @@ A report label of any shape inside a fenced code block stays text and supplies n
 
 A column-0 line that holds only `**Label**`, with no colon and no other text, is that label too. The lines under it supply its value as they do for the plain form.
 
-A column-0 line that holds only `Label`, with no colon and no other text, is that label too. The non-blank lines directly under it supply its value, joined with a space, so `Conclusion` above two prose lines reads them as one value. A blank line, a list, a Markdown table row, or another label line ends the value, so a table under the heading stays unparseable and a list under the heading folds as it does under the plain form. A line that merely contains a pipe, such as a shell pipeline, stays part of the value. A line inside a fenced code block stays text. A label name with trailing text stays prose. So does a lone label name in earlier prose, or in a response with no `Conclusion` line: the form reads from the last `Conclusion:` line or lone `Conclusion` line to the end, and no earlier line supplies a value.
+A column-0 line that holds only `Label`, with no colon and no other text, is that label too. A lone heading reads as its `Label: <first line>` form: the non-blank lines directly under it supply its value, joined with a space, so `Conclusion` above two prose lines reads them as one value, and a quoted line under it becomes the value. A list directly under that first line folds as it does under `Label: value`, an ordered list included. A blank line, a list, a Markdown table row, or another label line ends the value, so a table under the heading stays unparseable. A line that merely contains a pipe, such as a shell pipeline, stays part of the value. A line inside a fenced code block stays text. A label name with trailing text stays prose. So does a lone label name in earlier prose, or in a response with no `Conclusion` line: the form reads from the last `Conclusion:` line or lone `Conclusion` line to the end, and no earlier line supplies a value.
 
 When no `Conclusion:` label exists, the non-blank plain prose line directly before the first known
 report label outside a fence becomes `Conclusion`. Earlier prose stays out of the report. A block with no known
@@ -106,8 +106,8 @@ Any other list in the closing block makes the block unparseable, so the list sur
 through `raw` instead of being dropped. Examples are bullets after the reviewer `Verdict:` line,
 a list outside any label, and a bullet with no space after the marker (`-item`, `*item`). A
 separator other than one space (a tab, a nonbreaking space, two spaces) also fails, even under
-an empty label. A `*` or `+` bullet, an `N)` item, and an ordered item under a plain prose line
-fail too. An indented bullet with no parent item or another indent width fails as well. A bold heading line that groups a `- ` list
+an empty label. A `*` or `+` bullet and an `N)` item fail too. An ordered item under a plain
+prose section below a `Label:` line fails as well. An indented bullet with no parent item or another indent width fails as well. A bold heading line that groups a `- ` list
 outside the fold rule above fails too.
 
 A child that mirrors the parent prompt's ordered list still puts the list under a label. An indented
