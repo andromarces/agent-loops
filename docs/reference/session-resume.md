@@ -122,7 +122,7 @@ The OpenCode adapter passes `--standalone` on every OpenCode call of a turn: the
 
 The stream splits one response across several `text` parts, and each part carries the `messageID` of its message. `joinTextParts` (`src/agents/opencode-text.mjs`) joins them into one response:
 
-- Parts of one message join with no separator, except that a part opening a report label (`Conclusion:`, `Why:`, `Blockers:`, `Checks:`, `Notes:`, `Deferred:`) starts its own line, because the parser matches each label plain at column 0 and a glued label makes the whole block unparseable, so `raw` carries the response instead (issue #316).
+- Parts of one message join with no separator, except that a part opening a report label starts its own line: a colon form (`Why:`), a lone heading (`Why`), or a bold heading (`**Why**`). A bold heading breaks at its opening `**`, so its marks may sit in other parts. The break keeps each label plain at column 0, because a glued label makes the whole block unparseable, so `raw` carries the response instead (issues #316 and #2020).
 - The reviewer `Verdict:` label is not one of them. A part boundary inside a sentence, or before the `Verdict:` line, keeps the text as the model wrote it, so a model that writes `Verdict:` after prose without a line break of its own yields `verdict: unknown`.
 - A new message starts its own line (issue #458). Parts without a valid `messageID` form one unidentified message.
 - The last message that holds a closing block attempt governs alone. Earlier messages that hold an attempt drop, and messages without an attempt stay (issue #467).
