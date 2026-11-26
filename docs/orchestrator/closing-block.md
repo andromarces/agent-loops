@@ -62,7 +62,7 @@ labels it makes the block unparseable: put the paragraph and its list under one 
 Put quoted or multi-paragraph text before the closing block, not inside it, and refer to it from one
 label with a short line. The label keeps the short result that the parent reads. Under a `Label:`
 line, a quoted paragraph alone supplies no value, and a dash list directly under a quoted prose
-line makes the block unparseable. A quoted line under a lone heading supplies the value instead.
+line makes the block unparseable. A quoted line under a lone heading supplies the value instead unless it reads as a label line.
 
 A column-0 label line whose name and colon sit inside `**...**` is that label, for example
 `**Blockers:** none`. Only the six report labels gain this form, so `**Rule:**`
@@ -71,7 +71,7 @@ A report label of any shape inside a fenced code block stays text and supplies n
 
 A column-0 line that holds only `**Label**`, with no colon and no other text, is that label too. The lines under it supply its value as they do for the plain form.
 
-A column-0 line that holds only `Label`, with no colon and no other text, is that label too. A lone heading reads as its `Label: <first line>` form: the non-blank lines directly under it supply its value, joined with a space, so `Conclusion` above two prose lines reads them as one value, and a quoted line under it becomes the value. A list directly under that first line folds as it does under `Label: value`, an ordered list included. A blank line, a list, a Markdown table row, or another label line ends the value, so a table under the heading stays unparseable. A line that merely contains a pipe, such as a shell pipeline, stays part of the value. A line inside a fenced code block stays text. A label name with trailing text stays prose. So does a lone label name in earlier prose, or in a response with no `Conclusion` line: the form reads from the last `Conclusion:` line or lone `Conclusion` line to the end, and no earlier line supplies a value.
+A column-0 line that holds only `Label`, with no colon and no other text, is that label too. A lone heading reads as its `Label: <first line>` form: the non-blank lines directly under it supply its value, joined with a space, so `Conclusion` above two prose lines reads them as one value, and a quoted line under it becomes the value unless it reads as a label line. A list directly under that first line folds, an ordered list included. An ordered item in that list that reads as a `Verdict` line makes the block unparseable. A blank line, a list, a Markdown table row, or another label line ends the value, so a table under the heading stays unparseable. A line that merely contains a pipe, such as a shell pipeline, stays part of the value. A line inside a fenced code block stays text. A label name with trailing text stays prose. So does a lone label name in earlier prose, or in a response with no `Conclusion` line: the form reads from the last `Conclusion:` line or lone `Conclusion` line to the end, and no earlier line supplies a value.
 
 When no `Conclusion:` label exists, the non-blank plain prose line directly before the first known
 report label outside a fence becomes `Conclusion`. Earlier prose stays out of the report. A block with no known
