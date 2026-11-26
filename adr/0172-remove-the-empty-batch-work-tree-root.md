@@ -92,6 +92,7 @@ last step of finalization, so it never removes a directory that a later step wri
 ## Links
 
 - [Issue #2022: Remove the empty batch work-tree root when a batch ends](https://github.com/andromarces/agent-loops/issues/2022)
+- [PR #2027: Remove the empty batch work-tree root when a batch ends](https://github.com/andromarces/agent-loops/pull/2027)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md) (decisions 8 and 13)
 - [ADR 0118: Remove a finished audit work tree and store](0118-remove-a-finished-audit-work-tree-and-store.md) (decision 5 is the model)
 - Implementation: finalization in `src/batch/supervisor.mjs` and `removeEmptyDirectory` in `src/batch/audit-store.mjs`
