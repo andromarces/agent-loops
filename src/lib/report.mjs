@@ -62,9 +62,14 @@ function isKnownLabelLine(line, fenced = false) {
   return !fenced && KNOWN_LABEL_LINE.test(line);
 }
 
-// Lines inside a fenced code block, from a ``` or ~~~ opener to its matching closer. A bold report
-// label inside a fence stays text.
-function fencedLines(lines) {
+/**
+ * Lines inside a fenced code block, from a ``` or ~~~ opener to its matching closer. A bold report
+ * label inside a fence stays text. A caller outside this module that reads whole lines uses it, so
+ * a fenced line stays text there too.
+ * @param {string[]} lines
+ * @returns {boolean[]}
+ */
+export function fencedLines(lines) {
   const fenced = Array.from({ length: lines.length }, () => false);
   let fence = null;
   for (let i = 0; i < lines.length; i++) {

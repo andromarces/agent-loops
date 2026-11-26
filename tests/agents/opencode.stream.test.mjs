@@ -906,15 +906,46 @@ test("opencode refuses a bold heading report split across unidentified parts", a
   expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
 });
 
-// Usefulness: verifies a part that ends with the opening `**` of `**Checks**` is no whole heading
-// line, so the guard keeps main's result and the stream resolves (issue #2020 review).
-test("opencode keeps main's guard result for partial bold marks", async () => {
-  const split = await runWithEvents(textEvent("Verdict: accept - see **Checks"), textEvent("**"));
-  const single = await runWithText("Verdict: accept - see **Checks**");
+// Usefulness: verifies a bold Conclusion whose opening marks end the first part is no label line
+// for the guard, so the stream accepts as main's plain equivalent does (issue #2020 review).
+test("opencode accepts a bold conclusion whose opening marks end the first part", async () => {
+  const split = await runWithEvents(
+    textEvent("Narration.\n**"),
+    textEvent("Conclusion**\ndone\nWhy: ok\nBlockers: none\nVerdict: accept"),
+  );
+  const single = await runWithText(
+    "Narration.\n**Conclusion**\ndone\nWhy: ok\nBlockers: none\nVerdict: accept",
+  );
 
   expect(split).toBe(single);
-  expect(split).toBe("Verdict: accept - see **Checks**");
-  expect(parseVerdict(split)).toBe("unknown");
+  expect(parseVerdict(split)).toBe("accept");
+});
+
+// Usefulness: verifies a fenced bold Conclusion is no label line for the guard, so the real report
+// still spans the parts and refuses as main does (issue #2020 review).
+test("opencode refuses an accept with a fenced bold conclusion before the verdict", async () => {
+  const error = await runWithEvents(
+    textEvent("Conclusion: done\nWhy: ok\nBlockers: none\n"),
+    textEvent("```\n**Conclusion**\n```\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies an opening `**` that ends one part adds no bold label line, while main still
+// refuses because the Verdict label line spans the parts (issue #2020 review).
+test("opencode keeps main's guard result for partial bold marks", async () => {
+  const split = await runWithEvents(
+    textEvent("Conclusion: done\nVerdict: accept - see **Checks"),
+    textEvent("**"),
+  ).catch((err) => err);
+  const single = await runWithText("Conclusion: done\nVerdict: accept - see **Checks**");
+
+  expect(split).toBeInstanceOf(Error);
+  expect(split.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(single).toBe("Conclusion: done\nVerdict: accept - see **Checks**");
+  expect(parseVerdict(single)).toBe("accept");
 });
 
 // Usefulness: verifies a required label above Conclusion counts as a block label line, so a
