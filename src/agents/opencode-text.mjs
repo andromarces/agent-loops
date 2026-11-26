@@ -29,8 +29,8 @@ const ERROR_TEXT_LIMIT = 4000;
 /**
  * Joins the text parts of a turn into one response. Parts group into messages by `part.messageID`
  * (parts without a valid id form one unidentified message). A part glues to the one before it,
- * except that a part opening a report label starts its own line, and a new message
- * starts its own line. The last message that holds a closing block attempt governs
+ * except that a part opening a report label or a lone report heading starts its own line, and a
+ * new message starts its own line. The last message that holds a closing block attempt governs
  * alone: earlier attempt-holding messages drop, messages without an attempt stay.
  * The error text is redacted (ADR 0017) and bounded to its last 4000 code units. A later
  * redaction pass with a different environment can grow it past that bound.
@@ -176,5 +176,8 @@ function labelLinePartCount(parts) {
 }
 
 function joinPart(text, part) {
-  return LABEL_LINE.test(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
+  const heading = /\S$/.test(text) && reportHeadingName(part.split("\n", 1)[0]) !== null;
+  return (LABEL_LINE.test(part) || heading) && !text.endsWith("\n")
+    ? `${text}\n${part}`
+    : `${text}${part}`;
 }

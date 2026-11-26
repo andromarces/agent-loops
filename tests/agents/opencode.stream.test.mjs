@@ -238,6 +238,99 @@ test("opencode joins a split inline bold heading as main joins it", async () => 
   });
 });
 
+// Usefulness: verifies a part that opens with the lone heading `Why` after prose starts its own
+// line, so the joined response matches the same text in one part and the report parses (issue #2023).
+test("opencode starts a plain lone heading part on its own line", async () => {
+  const parts = [
+    "Conclusion\nThe change is small.",
+    "Why\nreason here\nBlockers: none\nChecks: ok",
+  ];
+  const split = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+  const single = await runWithText(parts.join("\n"));
+
+  expect(split).toBe(single);
+  expect(parseReportBlock(split)).toEqual({
+    conclusion: "The change is small.",
+    why: "reason here",
+    blockers: "none",
+    checks: "ok",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a part that opens with the lone bold heading `**Why**` after prose starts its
+// own line, so the report parses as the one-part text does (issue #2023, the #2020 known limit).
+test("opencode starts a bold lone heading part on its own line", async () => {
+  const parts = [
+    "Conclusion\nThe change is small.",
+    "**Why**\nreason here\nBlockers: none\nChecks: ok",
+  ];
+  const split = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+  const single = await runWithText(parts.join("\n"));
+
+  expect(split).toBe(single);
+  expect(parseReportBlock(split)).toEqual({
+    conclusion: "The change is small.",
+    why: "reason here",
+    blockers: "none",
+    checks: "ok",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies the lone heading rule waits for the joined text to end in a non-whitespace
+// character, so a heading after whitespace keeps main's glue (issue #2023 decision).
+test("opencode keeps main's glue for a lone heading part after whitespace", async () => {
+  const parts = ["Conclusion\nThe change is small. ", "Why\nreason here"];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies a report heading word inside prose gains no line break, so the sentence stays
+// glued as main joins it (issue #2023 decision).
+test("opencode keeps a heading word inside prose as main joins it", async () => {
+  const parts = ["Conclusion\ndone.", "The Why is explained in the notes."];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+});
+
+// Usefulness: verifies the `Verdict:` exclusion still keeps a reviewer verdict glued to the prose
+// before it, so a verdict the model never wrote at column 0 stays unknown as on main (issue #2023).
+test("opencode keeps a Verdict line glued as main joins it", async () => {
+  const parts = ["Conclusion: done\nWhy: ok\nBlockers: none", "Verdict: accept"];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseVerdict(response)).toBe("unknown");
+});
+
+// Usefulness: verifies a part that opens a report label line still starts its own line, so the
+// existing LABEL_LINE rule keeps its result beside the new heading rule (issue #2023).
+test("opencode starts a part that opens a label line on its own line", async () => {
+  const response = await runWithEvents(
+    textEvent("Conclusion: done", "msg-1"),
+    textEvent("Why: ok\nBlockers: none", "msg-1"),
+  );
+
+  expect(response).toBe("Conclusion: done\nWhy: ok\nBlockers: none");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies a part that continues a sentence gains no line break, so a mid-sentence
 // split keeps the prose intact, the envelope still carries the parsed report, and an unconditional
 // newline join cannot pass (issue #316).
