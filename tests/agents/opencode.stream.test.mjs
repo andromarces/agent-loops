@@ -191,6 +191,26 @@ test("opencode keeps a closing-block label at the start of its own line", async 
   });
 });
 
+// Usefulness: verifies a part that holds only a bold heading starts its own line as the plain
+// heading part does, so the report keeps its Blockers value instead of reading null (issue #2020
+// review).
+test("opencode joins a bold heading part as the plain heading part", async () => {
+  const prose = "Conclusion: done\nWhy: ok\nA closing line without a break";
+  const plain = await runWithEvents(
+    textEvent(prose, "msg-1"),
+    textEvent("Blockers", "msg-1"),
+    textEvent("\nnone", "msg-1"),
+  );
+  const bold = await runWithEvents(
+    textEvent(prose, "msg-1"),
+    textEvent("**Blockers**", "msg-1"),
+    textEvent("\nnone", "msg-1"),
+  );
+
+  expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
+  expect(parseReportBlock(bold)).toMatchObject({ blockers: "none" });
+});
+
 // Usefulness: verifies a part that continues a sentence gains no line break, so a mid-sentence
 // split keeps the prose intact, the envelope still carries the parsed report, and an unconditional
 // newline join cannot pass (issue #316).
@@ -819,6 +839,25 @@ test("opencode refuses a plain heading accept that spans unidentified parts", as
 
   expect(error).toBeInstanceOf(Error);
   expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies a bold heading line cut across unidentified parts trips the #509 guard as
+// the plain heading does, so an accept cannot span parts under either heading form (issue #2020
+// review).
+test("opencode refuses a bold heading accept that spans unidentified parts", async () => {
+  const plain = await runWithEvents(
+    textEvent("Conclusion\ndone\nWhy\nok\nBlockers\nnone\nChec"),
+    textEvent("ks\ntests passed\nVerdict: accept"),
+  ).catch((err) => err);
+  const bold = await runWithEvents(
+    textEvent("**Conclusion**\ndone\n**Why**\nok\n**Blockers**\nnone\n**Chec"),
+    textEvent("ks**\ntests passed\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(plain).toBeInstanceOf(Error);
+  expect(bold).toBeInstanceOf(Error);
+  expect(bold.message.split("\n")[0]).toBe(plain.message.split("\n")[0]);
+  expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
 });
 
 // Usefulness: verifies a required label above Conclusion counts as a block label line, so a

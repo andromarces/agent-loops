@@ -4,19 +4,35 @@ import {
   guardVerdict,
   hasClosingBlockAttempt,
   leadingRequiredLabelStart,
+  reportHeadingName,
 } from "../lib/report.mjs";
 import { isNonEmptyString } from "./shared.mjs";
 
-// A part that opens a report label. The reviewer `Verdict:` line is excluded: it gates acceptance,
-// so a `Verdict:` that sat mid-line before the join stays mid-line and reads as `unknown` rather
-// than becoming a verdict the model never wrote on its own line. The heading form names the label
-// alone on its line, so it opens a label line too.
-const LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")})(?::|\\s*$)`, "i");
-const BLOCK_LABEL_LINE = new RegExp(
-  `^(?:(?:${REPORT_LABEL_NAMES.join("|")})(?::|\\s*$)|Verdict:)`,
+// A part that opens a report label with a colon. The reviewer `Verdict:` line is excluded: it gates
+// acceptance, so a `Verdict:` that sat mid-line before the join stays mid-line and reads as
+// `unknown` rather than becoming a verdict the model never wrote on its own line.
+const COLON_LABEL_LINE = new RegExp(`^(?:${REPORT_LABEL_NAMES.join("|")}):`, "i");
+const COLON_BLOCK_LABEL_LINE = new RegExp(
+  `^(?:(?:${REPORT_LABEL_NAMES.join("|")}):|Verdict:)`,
   "i",
 );
-const BLOCK_START = /^Conclusion(?::|\s*$)/i;
+const COLON_BLOCK_START = /^Conclusion:/i;
+
+// A line that opens a report label, with a colon or as a lone heading. `reportHeadingName` reads
+// both heading forms, so a plain and a bold heading split and join alike.
+function opensLabelLine(line) {
+  return COLON_LABEL_LINE.test(line) || reportHeadingName(line) !== null;
+}
+
+// A line that opens a report label inside the block, or the reviewer `Verdict:` line.
+function opensBlockLabelLine(line) {
+  return COLON_BLOCK_LABEL_LINE.test(line) || reportHeadingName(line) !== null;
+}
+
+// True when the line starts the closing block, a `Conclusion:` line or a Conclusion heading.
+function opensBlockStart(line) {
+  return COLON_BLOCK_START.test(line) || reportHeadingName(line)?.toLowerCase() === "conclusion";
+}
 
 const INTERLEAVED_MESSAGE = "opencode returned closing block attempts from interleaved messages.";
 const UNIDENTIFIED_MESSAGE = "opencode returned a closing block that spans unidentified parts.";
@@ -116,7 +132,7 @@ function labelLinePartCount(parts) {
     offset += line.length + 1;
     return { line, span };
   });
-  const last = lines.findLastIndex(({ line }) => BLOCK_START.test(line));
+  const last = lines.findLastIndex(({ line }) => opensBlockStart(line));
   const start =
     last === -1
       ? -1
@@ -126,7 +142,7 @@ function labelLinePartCount(parts) {
         );
   const touched = new Set();
   for (const { line, span } of lines.slice(Math.max(start, 0))) {
-    if (start === -1 || !BLOCK_LABEL_LINE.test(line)) continue;
+    if (start === -1 || !opensBlockLabelLine(line)) continue;
     spans.forEach(([from, to], index) => {
       if (from < span[1] && span[0] < to) touched.add(index);
     });
@@ -135,5 +151,5 @@ function labelLinePartCount(parts) {
 }
 
 function joinPart(text, part) {
-  return LABEL_LINE.test(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
+  return opensLabelLine(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
 }

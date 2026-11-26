@@ -2658,20 +2658,21 @@ test("parseReportBlock matches the plain heading when a bold heading block falls
 });
 
 // Usefulness: verifies the repair matcher reads a bold heading with prose, a dash item, a duplicate
-// Why label, and an empty Notes label as the plain heading does, including the raw-line fallback of
-// ADR 0169 (issue #2020 review).
+// Why label, and an empty Notes label as the plain heading does. The duplicate Why after the fold
+// fails the fold, so the raw-line comparison applies, and only that comparison accepts a repaired
+// Notes finding for a label the original named but left empty (ADR 0169, issue #2020 review).
 test("repairedReportMatches reads a bold heading as the plain heading on a fallback block", () => {
   const bold = [
+    "Conclusion: done",
     "**Why**",
     "The suite passed.",
     "- a",
     "Why: duplicate",
-    "Conclusion: done",
     "Notes:",
     "Blockers: none",
   ].join("\n");
   const plain = bold.replace("**Why**", "Why");
-  const repaired = "Conclusion: done\nWhy: none\nBlockers: none";
+  const repaired = "Conclusion: done\nWhy: duplicate\nBlockers: none\nNotes: none";
   const report = parseReportBlock(repaired);
   const task = "Conclusion: done\nWhy: The suite passed.\nBlockers: none";
 
@@ -2683,7 +2684,18 @@ test("repairedReportMatches reads a bold heading as the plain heading on a fallb
   expect(repairedReportMatches(bold, repaired, report)).toBe(
     repairedReportMatches(plain, repaired, report),
   );
-  expect(repairedReportMatches(bold, repaired, report)).toBe(false);
+  expect(repairedReportMatches(bold, repaired, report)).toBe(true);
+});
+
+// Usefulness: verifies the copied-task check reads a bold heading in the init task as main does,
+// so a colon-only report that repeats the task's Why value still names Why (issue #2020 review).
+test("copiedTaskReportLabels keeps the Why copied from a bold heading init task", () => {
+  const task = ["The fix is small.", "**Why**", "- Red test first.", "- The fix."].join("\n");
+  const report = parseReportBlock(
+    "Conclusion: done\nWhy: Red test first.; The fix.\nBlockers: none",
+  );
+
+  expect(copiedTaskReportLabels(report, task)).toEqual(["Why"]);
 });
 
 // Usefulness: verifies the exact issue #1989 shape parses, so no other test needs the full block.
