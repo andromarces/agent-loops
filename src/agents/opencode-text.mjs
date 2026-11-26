@@ -33,9 +33,9 @@ const ERROR_TEXT_LIMIT = 4000;
  * Joins the text parts of a turn into one response. Parts group into messages by `part.messageID`
  * (parts without a valid id form one unidentified message). A part glues to the one before it,
  * except that a part opening a report label line starts its own line, and a new message starts its
- * own line. That join is returned unchanged when it gives a report. Otherwise a part whose first
- * line is a lone report heading starts its own line when the text so far ends in a non-whitespace
- * character and a later unfenced line opens a report label, plain or bold.
+ * own line. That join is returned unchanged when its trimmed form gives a report. Otherwise a
+ * part whose first line is a lone report heading starts its own line when the text so far ends in
+ * a non-whitespace character and a later unfenced line opens a report label, plain or bold.
  * The last message that holds a closing block attempt governs alone: earlier
  * attempt-holding messages drop, messages without an attempt stay. The split guard reads
  * origin/main's join, so its result never changes.
@@ -80,7 +80,7 @@ export function joinTextParts(events) {
   dropped.delete(governing);
   const kept = messages.filter((group) => !dropped.has(group));
   const mainText = joinMessages(kept, mainJoinPart);
-  return parseReportBlock(mainText) === null ? joinMessages(kept) : mainText;
+  return parseReportBlock(mainText.trim()) === null ? joinMessages(kept) : mainText;
 }
 
 /**
@@ -192,8 +192,8 @@ function mainJoinPart(text, part) {
 // True when a line after the first opens a report label, plain or bold, outside a fence. The fence
 // status comes from the text so far plus the part, so an opener in an earlier part counts too.
 function hasLaterReportLabelLine(text, part) {
-  const partLines = part.split("\n");
-  const lines = (text + part).split("\n");
+  const partLines = part.split(/\r?\n/);
+  const lines = (text + part).split(/\r?\n/);
   const fenced = fencedLines(lines);
   const first = lines.length - partLines.length;
   return partLines
@@ -207,7 +207,7 @@ function hasLaterReportLabelLine(text, part) {
 function joinPart(text, part) {
   const heading =
     /\S$/.test(text) &&
-    reportHeadingName(part.split("\n", 1)[0]) !== null &&
+    reportHeadingName(part.split(/\r?\n/, 1)[0]) !== null &&
     hasLaterReportLabelLine(text, part);
   return (LABEL_LINE.test(part) || heading) && !text.endsWith("\n")
     ? `${text}\n${part}`

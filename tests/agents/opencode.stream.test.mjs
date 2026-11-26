@@ -511,6 +511,50 @@ test("opencode does not count a Verdict line as the heading trigger", async () =
   expect(parseReportBlock(response)).toBeNull();
 });
 
+// Usefulness: verifies the main-report decision reads the trimmed text the adapter parses, so a
+// stream that already parses on main keeps its conclusion (issue #2023 review, blocker A).
+test("opencode decides the main report on the trimmed main join", async () => {
+  const parts = [
+    "  Conclusion: done.",
+    "Notes\nWhy: ok\nBlockers: none\nChecks: passed\nVerdict: accept",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join("").trim());
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done.Notes",
+    why: "ok",
+    blockers: "none",
+    checks: "passed",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies CRLF parts split lines as the parser does, so a bold label line after a CRLF
+// boundary triggers the split and the CRLF stream parses as the one-part text (issue #2023 review,
+// blocker B).
+test("opencode splits a CRLF heading part as the one-part CRLF text", async () => {
+  const parts = [
+    "Conclusion\r\nThe change is small.",
+    "**Why**\r\nreason here\r\n**Blockers:** none\r\n**Checks:** ok\r\n",
+  ];
+
+  const split = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+  const single = await runWithText(parts.join("\n"));
+
+  expect(split).toBe(single);
+  expect(parseReportBlock(split)).toEqual({
+    conclusion: "The change is small.",
+    why: "reason here",
+    blockers: "none",
+    checks: "ok",
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies a part that continues a sentence gains no line break, so a mid-sentence
 // split keeps the prose intact, the envelope still carries the parsed report, and an unconditional
 // newline join cannot pass (issue #316).
