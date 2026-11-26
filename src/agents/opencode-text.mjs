@@ -4,6 +4,7 @@ import {
   fencedLines,
   guardVerdict,
   hasClosingBlockAttempt,
+  isKnownLabelLine,
   leadingRequiredLabelStart,
   reportHeadingName,
 } from "../lib/report.mjs";
@@ -30,10 +31,11 @@ const ERROR_TEXT_LIMIT = 4000;
  * Joins the text parts of a turn into one response. Parts group into messages by `part.messageID`
  * (parts without a valid id form one unidentified message). A part glues to the one before it,
  * except that a part opening a report label line starts its own line, and a part whose first line
- * is a lone report heading starts its own line when the text so far ends in a character that is
- * neither whitespace nor a letter, digit, or underscore; a new message starts its own line.
+ * is a lone report heading starts its own line when the text so far ends in a non-whitespace
+ * character and a later line is a report label line; a new message starts its own line.
  * The last message that holds a closing block attempt governs alone: earlier
- * attempt-holding messages drop, messages without an attempt stay.
+ * attempt-holding messages drop, messages without an attempt stay. The split guard reads
+ * origin/main's join, so its result never changes.
  * The error text is redacted (ADR 0017) and bounded to its last 4000 code units. A later
  * redaction pass with a different environment can grow it past that bound.
  * @throws {Error} when two attempt-holding messages interleave in the stream, or when the
@@ -65,7 +67,7 @@ export function joinTextParts(events) {
   const governing = attempts.at(-1);
   if (
     governing?.unidentified &&
-    guardVerdict(joinMessages([governing])) === "accept" &&
+    guardVerdict(joinMessages([governing], mainJoinPart)) === "accept" &&
     labelLinePartCount(projectBoldHeadings(governing.parts)) > 1
   ) {
     throw boundedError(UNIDENTIFIED_MESSAGE, messages);
@@ -83,7 +85,7 @@ export function joinTextParts(events) {
  * states the cut.
  */
 function boundedError(cause, messages) {
-  const text = redactEnvSecrets(joinMessages(messages));
+  const text = redactEnvSecrets(joinMessages(messages, mainJoinPart));
   if (text.length <= ERROR_TEXT_LIMIT) return new Error(`${cause}\n${text}`);
   let tail = text.slice(-ERROR_TEXT_LIMIT);
   if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1);
@@ -91,11 +93,11 @@ function boundedError(cause, messages) {
   return new Error(`${cause}\n${note}\n${tail}`);
 }
 
-function joinMessages(messages) {
+function joinMessages(messages, join = joinPart) {
   return messages.reduce((text, { parts }) => {
     const opening = parts.join("");
     const breaks = text && opening && !text.endsWith("\n");
-    return parts.reduce(joinPart, breaks ? `${text}\n` : text);
+    return parts.reduce(join, breaks ? `${text}\n` : text);
   }, "");
 }
 
@@ -110,7 +112,7 @@ function joinMessages(messages) {
 function projectBoldHeadings(parts) {
   const spans = [];
   const text = parts.reduce((joined, part) => {
-    const next = joinPart(joined, part);
+    const next = mainJoinPart(joined, part);
     spans.push([next.length - part.length, next.length]);
     return next;
   }, "");
@@ -148,7 +150,7 @@ function projectBoldHeadings(parts) {
 function labelLinePartCount(parts) {
   const spans = [];
   const text = parts.reduce((joined, part) => {
-    const next = joinPart(joined, part);
+    const next = mainJoinPart(joined, part);
     spans.push([next.length - part.length, next.length]);
     return next;
   }, "");
@@ -177,12 +179,24 @@ function labelLinePartCount(parts) {
   return touched.size;
 }
 
-// A heading part starts its own line only after a character that is neither whitespace nor a word
-// character, so a part that opens mid-word (`foot` then `notes`) stays glued as main joins it.
-const HEADING_BREAK = /[^\s\p{L}\p{N}_]$/u;
+// The join of origin/main, which the split guard reads, so its result never changes.
+function mainJoinPart(text, part) {
+  return LABEL_LINE.test(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
+}
+
+// True when a line after the first opens a report label, plain or bold, as the parser reads one.
+function hasLaterReportLabelLine(part) {
+  return part
+    .split("\n")
+    .slice(1)
+    .some((line) => isKnownLabelLine(line));
+}
 
 function joinPart(text, part) {
-  const heading = HEADING_BREAK.test(text) && reportHeadingName(part.split("\n", 1)[0]) !== null;
+  const heading =
+    /\S$/.test(text) &&
+    reportHeadingName(part.split("\n", 1)[0]) !== null &&
+    hasLaterReportLabelLine(part);
   return (LABEL_LINE.test(part) || heading) && !text.endsWith("\n")
     ? `${text}\n${part}`
     : `${text}${part}`;

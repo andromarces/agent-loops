@@ -390,6 +390,66 @@ test("opencode keeps a bold heading part with more text glued after whitespace",
   expect(response).toBe("Working on it. **Why**\nreason here");
 });
 
+// Usefulness: verifies a heading part after a period keeps main's split-guard refusal, so the guard
+// result stays as on origin/main whatever the report join does (issue #2023 review).
+test("opencode keeps main's guard result for a heading part after a period", async () => {
+  const parts = [
+    "Conclusion: Preliminary review.\nWhy: Initial checks passed.\nBlockers: none\nChecks: ok.",
+    "Conclusion\nFinal review passed.\nWhy: The fix works.\nBlockers: none\nChecks: ok\nVerdict: accept",
+  ];
+
+  const error = await runWithEvents(...parts.map((part) => textEvent(part))).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(error.message.endsWith(parts.join(""))).toBe(true);
+});
+
+// Usefulness: verifies a part that opens with `notes` inside `release-notes` stays glued, because
+// the part holds no later report label line, so main's accepted report survives (issue #2023
+// review).
+test("opencode keeps main's join for a part that starts at a hyphenated word", async () => {
+  const parts = [
+    "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: passed\nVerdict: accept\n\nSee release-",
+    "notes\nfor details.",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part)));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseVerdict(response)).toBe("accept");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: "passed",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a heading part after a non-ASCII number starts its own line when a later line
+// opens a report label, so the report parses as the one-part text does (issue #2023 review).
+test("opencode starts a heading part after a non-ASCII number", async () => {
+  const parts = [
+    "Conclusion\nThe share is ½",
+    "Why\nIt is one of two.\nBlockers: none\nChecks: ok",
+  ];
+
+  const split = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+  const single = await runWithText(parts.join("\n"));
+
+  expect(split).toBe(single);
+  expect(parseReportBlock(split)).toEqual({
+    conclusion: "The share is ½",
+    why: "It is one of two.",
+    blockers: "none",
+    checks: "ok",
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies a part that continues a sentence gains no line break, so a mid-sentence
 // split keeps the prose intact, the envelope still carries the parsed report, and an unconditional
 // newline join cannot pass (issue #316).

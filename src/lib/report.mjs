@@ -58,7 +58,7 @@ const PLAIN_LABEL_LINE = new RegExp(`^(?:${LABEL_NAMES}):`, "i");
  * @param {boolean} [fenced]
  * @returns {boolean}
  */
-function isKnownLabelLine(line, fenced = false) {
+export function isKnownLabelLine(line, fenced = false) {
   return !fenced && KNOWN_LABEL_LINE.test(line);
 }
 
@@ -1056,8 +1056,8 @@ function appendToLabel(label, text) {
  * The report label name of a column-0 heading line, plain or bold, or null when the line holds no
  * heading. Only the six report labels gain this form. An adapter that splits or joins response text
  * uses it: the OpenCode join starts a part on its own line when this recognizes the part's first
- * line and the joined text so far ends in a character that is neither whitespace nor a letter,
- * digit, or underscore.
+ * line, the joined text so far ends in a non-whitespace character, and a later line of the part is
+ * a report label line.
  * @param {string} line
  * @returns {string | null}
  */
