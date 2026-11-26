@@ -450,6 +450,67 @@ test("opencode starts a heading part after a non-ASCII number", async () => {
   });
 });
 
+// Usefulness: verifies a rewritten join never runs when main's join already gives a report, so a
+// glued unknown verdict stays unknown and acceptance still refuses (issue #2023 review, blocker 1).
+test("opencode keeps main's unknown verdict when a report already parses", async () => {
+  const parts = [
+    "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: passed\nVerdict: accept",
+    "Notes\nMore detail.\nDeferred: none",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part)));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseVerdict(response)).toBe("unknown");
+  expect(acceptanceFailure(response)).toBe("verdict");
+});
+
+// Usefulness: verifies a label line inside a fence never triggers the heading split, so a part that
+// starts mid-word keeps main's join (issue #2023 review, blocker 2).
+test("opencode keeps a fenced label line from triggering a split", async () => {
+  const parts = [
+    "See the release-",
+    "notes\nThe file contains this example.\n~~~text\nChecks: ok\n~~~",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies a Verdict line is not the trigger when main's join already gives a report, so
+// the response stays main's join (issue #2023 review, blocker 3).
+test("opencode keeps main's join when a Verdict line is the only later label", async () => {
+  const parts = [
+    "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: passed",
+    "Notes\nMore detail.\nVerdict: accept",
+  ];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: "passedNotes",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a Verdict line never triggers the heading split when main's join is null, so
+// the trigger names a report label line only (issue #2023 review, blocker 3).
+test("opencode does not count a Verdict line as the heading trigger", async () => {
+  const parts = ["Conclusion\nThe change is small.", "Why\nreason here\nVerdict: accept"];
+
+  const response = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+
+  expect(response).toBe(parts.join(""));
+  expect(parseReportBlock(response)).toBeNull();
+});
+
 // Usefulness: verifies a part that continues a sentence gains no line break, so a mid-sentence
 // split keeps the prose intact, the envelope still carries the parsed report, and an unconditional
 // newline join cannot pass (issue #316).

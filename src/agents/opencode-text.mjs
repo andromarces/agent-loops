@@ -1,11 +1,13 @@
 import { redactEnvSecrets } from "../lib/redact.mjs";
 import {
+  BOLD_LABEL_LINE,
+  PLAIN_LABEL_LINE,
   REPORT_LABEL_NAMES,
   fencedLines,
   guardVerdict,
   hasClosingBlockAttempt,
-  isKnownLabelLine,
   leadingRequiredLabelStart,
+  parseReportBlock,
   reportHeadingName,
 } from "../lib/report.mjs";
 import { isNonEmptyString } from "./shared.mjs";
@@ -30,9 +32,10 @@ const ERROR_TEXT_LIMIT = 4000;
 /**
  * Joins the text parts of a turn into one response. Parts group into messages by `part.messageID`
  * (parts without a valid id form one unidentified message). A part glues to the one before it,
- * except that a part opening a report label line starts its own line, and a part whose first line
- * is a lone report heading starts its own line when the text so far ends in a non-whitespace
- * character and a later line is a report label line; a new message starts its own line.
+ * except that a part opening a report label line starts its own line, and a new message starts its
+ * own line. That join is returned unchanged when it gives a report. Otherwise a part whose first
+ * line is a lone report heading starts its own line when the text so far ends in a non-whitespace
+ * character and a later unfenced line opens a report label, plain or bold.
  * The last message that holds a closing block attempt governs alone: earlier
  * attempt-holding messages drop, messages without an attempt stay. The split guard reads
  * origin/main's join, so its result never changes.
@@ -75,7 +78,9 @@ export function joinTextParts(events) {
 
   const dropped = new Set(attempts);
   dropped.delete(governing);
-  return joinMessages(messages.filter((group) => !dropped.has(group)));
+  const kept = messages.filter((group) => !dropped.has(group));
+  const mainText = joinMessages(kept, mainJoinPart);
+  return parseReportBlock(mainText) === null ? joinMessages(kept) : mainText;
 }
 
 /**
@@ -184,19 +189,26 @@ function mainJoinPart(text, part) {
   return LABEL_LINE.test(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
 }
 
-// True when a line after the first opens a report label, plain or bold, as the parser reads one.
-function hasLaterReportLabelLine(part) {
-  return part
-    .split("\n")
+// True when a line after the first opens a report label, plain or bold, outside a fence. The fence
+// status comes from the text so far plus the part, so an opener in an earlier part counts too.
+function hasLaterReportLabelLine(text, part) {
+  const partLines = part.split("\n");
+  const lines = (text + part).split("\n");
+  const fenced = fencedLines(lines);
+  const first = lines.length - partLines.length;
+  return partLines
     .slice(1)
-    .some((line) => isKnownLabelLine(line));
+    .some(
+      (line, index) =>
+        !fenced[first + index + 1] && (PLAIN_LABEL_LINE.test(line) || BOLD_LABEL_LINE.test(line)),
+    );
 }
 
 function joinPart(text, part) {
   const heading =
     /\S$/.test(text) &&
     reportHeadingName(part.split("\n", 1)[0]) !== null &&
-    hasLaterReportLabelLine(part);
+    hasLaterReportLabelLine(text, part);
   return (LABEL_LINE.test(part) || heading) && !text.endsWith("\n")
     ? `${text}\n${part}`
     : `${text}${part}`;
