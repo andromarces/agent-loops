@@ -191,6 +191,53 @@ test("opencode keeps a closing-block label at the start of its own line", async 
   });
 });
 
+// Usefulness: verifies an inline bold label name with text on either side stays inline, so the
+// whole sentence remains the Why value as main joins it (issue #2020 review).
+test("opencode keeps an inline bold label name in the Why value", async () => {
+  const parts = [
+    "Conclusion: done\n",
+    "Why: The memo emphasizes ",
+    "**Notes**",
+    " for readers.\n",
+    "Blockers: none\n",
+    "Checks: pnpm test",
+  ];
+  const split = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+  const single = await runWithText(parts.join(""));
+
+  expect(split).toBe(single);
+  expect(parseReportBlock(split)).toEqual({
+    conclusion: "done",
+    why: "The memo emphasizes **Notes** for readers.",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies the restored main join keeps the break it inserts before the fraction of a
+// bold heading that arrives as its own part, so the joined text equals main's (issue #2020 review).
+test("opencode joins a split inline bold heading as main joins it", async () => {
+  const response = await runWithEvents(
+    textEvent("Conclusion: done\nWhy: ok\n", "msg-1"),
+    textEvent("See **", "msg-1"),
+    textEvent("Notes", "msg-1"),
+    textEvent("** for context.\n", "msg-1"),
+    textEvent("Blockers: none", "msg-1"),
+  );
+
+  expect(response).toBe("Conclusion: done\nWhy: ok\nSee **\nNotes** for context.\nBlockers: none");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
 // Usefulness: verifies a part that continues a sentence gains no line break, so a mid-sentence
 // split keeps the prose intact, the envelope still carries the parsed report, and an unconditional
 // newline join cannot pass (issue #316).
@@ -819,6 +866,124 @@ test("opencode refuses a plain heading accept that spans unidentified parts", as
 
   expect(error).toBeInstanceOf(Error);
   expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies a bold heading line cut across unidentified parts trips the #509 guard as
+// the plain heading does, so an accept cannot span parts under either heading form (issue #2020
+// review).
+test("opencode refuses a bold heading accept that spans unidentified parts", async () => {
+  const plain = await runWithEvents(
+    textEvent("Conclusion\ndone\nWhy\nok\nBlockers\nnone\nChec"),
+    textEvent("ks\ntests passed\nVerdict: accept"),
+  ).catch((err) => err);
+  const bold = await runWithEvents(
+    textEvent("**Conclusion**\ndone\n**Why**\nok\n**Blockers**\nnone\n**Chec"),
+    textEvent("ks**\ntests passed\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(plain).toBeInstanceOf(Error);
+  expect(bold).toBeInstanceOf(Error);
+  expect(bold.message.split("\n")[0]).toBe(plain.message.split("\n")[0]);
+  expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies the split guard counts a line that holds only `**Label**` as a label line,
+// so a bold report split across unidentified parts refuses as the plain report does (issue #2020
+// review).
+test("opencode refuses a bold heading report split across unidentified parts", async () => {
+  const plain = await runWithEvents(
+    textEvent("Conclusion\nWhy\n"),
+    textEvent("done\nok\nBlockers\nnone\nVerdict: accept"),
+  ).catch((err) => err);
+  const bold = await runWithEvents(
+    textEvent("**Conclusion**\n**Why**\n"),
+    textEvent("done\nok\n**Blockers**\nnone\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(plain).toBeInstanceOf(Error);
+  expect(bold).toBeInstanceOf(Error);
+  expect(bold.message.split("\n")[0]).toBe(plain.message.split("\n")[0]);
+  expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies a bold Conclusion whose opening marks end the first part is no label line
+// for the guard, so the stream accepts as main's plain equivalent does (issue #2020 review).
+test("opencode accepts a bold conclusion whose opening marks end the first part", async () => {
+  const split = await runWithEvents(
+    textEvent("Narration.\n**"),
+    textEvent("Conclusion**\ndone\nWhy: ok\nBlockers: none\nVerdict: accept"),
+  );
+  const single = await runWithText(
+    "Narration.\n**Conclusion**\ndone\nWhy: ok\nBlockers: none\nVerdict: accept",
+  );
+
+  expect(split).toBe(single);
+  expect(parseVerdict(split)).toBe("accept");
+});
+
+// Usefulness: verifies a fenced bold Conclusion is no label line for the guard, so the real report
+// still spans the parts and refuses as main does (issue #2020 review).
+test("opencode refuses an accept with a fenced bold conclusion before the verdict", async () => {
+  const error = await runWithEvents(
+    textEvent("Conclusion: done\nWhy: ok\nBlockers: none\n"),
+    textEvent("```\n**Conclusion**\n```\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(error).toBeInstanceOf(Error);
+  expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies the guard projects a bold Conclusion split inside its name to the plain
+// label, so the plain label spanning the parts refuses as main does (issue #2020 review).
+test("opencode refuses a bold conclusion split inside its name", async () => {
+  const plain = await runWithEvents(
+    textEvent("Conclu"),
+    textEvent("sion\ndone\nWhy: ok\nBlockers: none\nVerdict: accept"),
+  ).catch((err) => err);
+  const bold = await runWithEvents(
+    textEvent("**Conclu"),
+    textEvent("sion**\ndone\nWhy: ok\nBlockers: none\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(plain).toBeInstanceOf(Error);
+  expect(bold).toBeInstanceOf(Error);
+  expect(bold.message.split("\n")[0]).toBe(plain.message.split("\n")[0]);
+  expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies the guard projects every whole-line bold heading in the parts, so the plain
+// projection decides the result when the headings arrive in later parts (issue #2020 review).
+test("opencode gives main's guard result for split bold headings in later parts", async () => {
+  const plain = await runWithEvents(
+    textEvent("Narration.\n"),
+    textEvent("Conclusion\ndone\nWhy\n"),
+    textEvent("ok\nChecks\nok\nVerdict: accept"),
+  ).catch((err) => err);
+  const bold = await runWithEvents(
+    textEvent("Narration.\n**"),
+    textEvent("Conclusion**\ndone\n**Why**\n"),
+    textEvent("ok\n**Checks**\nok\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(plain).toBeInstanceOf(Error);
+  expect(bold).toBeInstanceOf(Error);
+  expect(bold.message.split("\n")[0]).toBe(plain.message.split("\n")[0]);
+  expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies an opening `**` that ends one part adds no bold label line, while main still
+// refuses because the Verdict label line spans the parts (issue #2020 review).
+test("opencode keeps main's guard result for partial bold marks", async () => {
+  const split = await runWithEvents(
+    textEvent("Conclusion: done\nVerdict: accept - see **Checks"),
+    textEvent("**"),
+  ).catch((err) => err);
+  const single = await runWithText("Conclusion: done\nVerdict: accept - see **Checks**");
+
+  expect(split).toBeInstanceOf(Error);
+  expect(split.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+  expect(single).toBe("Conclusion: done\nVerdict: accept - see **Checks**");
+  expect(parseVerdict(single)).toBe("accept");
 });
 
 // Usefulness: verifies a required label above Conclusion counts as a block label line, so a

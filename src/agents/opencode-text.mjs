@@ -1,9 +1,11 @@
 import { redactEnvSecrets } from "../lib/redact.mjs";
 import {
   REPORT_LABEL_NAMES,
+  fencedLines,
   guardVerdict,
   hasClosingBlockAttempt,
   leadingRequiredLabelStart,
+  reportHeadingName,
 } from "../lib/report.mjs";
 import { isNonEmptyString } from "./shared.mjs";
 
@@ -62,7 +64,7 @@ export function joinTextParts(events) {
   if (
     governing?.unidentified &&
     guardVerdict(joinMessages([governing])) === "accept" &&
-    labelLinePartCount(governing.parts) > 1
+    labelLinePartCount(projectBoldHeadings(governing.parts)) > 1
   ) {
     throw boundedError(UNIDENTIFIED_MESSAGE, messages);
   }
@@ -93,6 +95,45 @@ function joinMessages(messages) {
     const breaks = text && opening && !text.endsWith("\n");
     return parts.reduce(joinPart, breaks ? `${text}\n` : text);
   }, "");
+}
+
+/**
+ * Builds the plain projection of `parts` for the split guard. Each line that holds only
+ * `**Label**` outside a fence loses its four marker characters, at the part that carries each one,
+ * wherever the split falls. Every other character stays, so a message with no such line projects
+ * to itself and the guard reads it as main reads it.
+ * @param {string[]} parts
+ * @returns {string[]}
+ */
+function projectBoldHeadings(parts) {
+  const spans = [];
+  const text = parts.reduce((joined, part) => {
+    const next = joinPart(joined, part);
+    spans.push([next.length - part.length, next.length]);
+    return next;
+  }, "");
+  const lines = text.split("\n");
+  const fenced = fencedLines(lines);
+  const removed = parts.map(() => new Set());
+  let offset = 0;
+  for (const [index, line] of lines.entries()) {
+    const start = offset;
+    offset += line.length + 1;
+    if (fenced[index] || !line.startsWith("**") || reportHeadingName(line) === null) continue;
+    const end = line.trimEnd().length;
+    for (const at of [start, start + 1, start + end - 2, start + end - 1]) {
+      const partIndex = spans.findIndex(([from, to]) => from <= at && at < to);
+      if (partIndex !== -1) removed[partIndex].add(at - spans[partIndex][0]);
+    }
+  }
+  return parts.map((part, index) =>
+    removed[index].size === 0
+      ? part
+      : part
+          .split("")
+          .filter((_, at) => !removed[index].has(at))
+          .join(""),
+  );
 }
 
 /**

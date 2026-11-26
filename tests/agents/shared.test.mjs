@@ -86,6 +86,21 @@ test("lastClosingMessage picks a final plain heading report", () => {
   expect(lastClosingMessage([stale, fresh])).toBe(fresh);
 });
 
+// Usefulness: verifies an all-bold report with no colon labels governs as the plain heading report
+// does, so a later acknowledgment message does not replace it (issue #2020 review).
+test("lastClosingMessage picks an all-bold heading report over a later acknowledgment", () => {
+  const report =
+    "**Conclusion**\nThe run landed.\n\n**Why**\nThe tests passed.\n\n**Blockers**\nnone";
+  const plain = report
+    .replaceAll("**Conclusion**", "Conclusion")
+    .replaceAll("**Why**", "Why")
+    .replaceAll("**Blockers**", "Blockers");
+  const acknowledgment = "Acknowledged.";
+
+  expect(lastClosingMessage([report, acknowledgment])).toBe(report);
+  expect(lastClosingMessage([plain, acknowledgment])).toBe(plain);
+});
+
 // Usefulness: verifies a later message with only fenced or prose lone label lines is no attempt, so
 // the completed report still governs (issue #1989).
 test("lastClosingMessage keeps the report before a later non-closing lone label line", () => {

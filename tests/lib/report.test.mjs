@@ -2493,9 +2493,13 @@ test("parseReportBlock reads the issue #1585 bold heading labels", () => {
   });
 });
 
-// Usefulness: verifies `**Conclusion** some text` stays text, a shape no other test covers (issue #1585).
-test("parseReportBlock keeps a bold heading with trailing text as text", () => {
-  expect(parseReportBlock("**Conclusion** some text\nWhy: ok\nBlockers: none")).toBeNull();
+// Usefulness: verifies a bold label with trailing text stays prose as main reads it, so it never
+// supplies the conclusion (issue #2020 review).
+test("parseReportBlock keeps a bold label with trailing text as prose", () => {
+  const response = "**Conclusion** The checks passed.\nWhy: ok\nBlockers: none";
+
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Conclusion"]);
   expect(
     parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n**Notes** some text"),
   ).toMatchObject({ notes: null });
@@ -2564,6 +2568,138 @@ test("parseReportBlock keeps a bold heading label inside a fenced code block as 
     notes: null,
     deferred: null,
   });
+});
+
+// Usefulness: verifies a column-0 bold heading takes the prose lines under it as the plain lone
+// heading does, so the documented form keeps its report (issue #2020). No other test covers a bold
+// heading above prose.
+test("parseReportBlock reads prose under a bold heading label", () => {
+  const response = [
+    "Conclusion: done",
+    "**Why**",
+    "The change is small.",
+    "",
+    "Blockers: none",
+    "Checks: npm test passed",
+  ].join("\n");
+  const expected = {
+    conclusion: "done",
+    why: "The change is small.",
+    blockers: "none",
+    checks: "npm test passed",
+    notes: null,
+    deferred: null,
+  };
+  expect(parseReportBlock(response)).toEqual(expected);
+  expect(parseReportBlock(response.replace("**Why**", "Why"))).toEqual(expected);
+  expect(missingRequiredReportLabels(response)).toEqual([]);
+});
+
+// Usefulness: verifies an ordered list after prose under a bold heading leaves the unlabeled
+// start where the plain heading leaves it, so the missing-label diagnosis matches (issue #2020
+// review, ADR 0167). No other test compares a bold heading against the plain one.
+test("parseReportBlock places a bold heading above prose and an ordered list as the plain heading", () => {
+  const bold = [
+    "Narration.",
+    "",
+    "**Why**",
+    "The suite passed.",
+    "1. Unit tests passed.",
+    "",
+    "Why: ok",
+    "Blockers: none",
+  ].join("\n");
+  const plain = bold.replace("**Why**", "Why");
+
+  expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
+  expect(missingRequiredReportLabels(bold)).toEqual(missingRequiredReportLabels(plain));
+  expect(parseReportBlock(bold)).toBeNull();
+  expect(missingRequiredReportLabels(bold)).toEqual(["Conclusion"]);
+});
+
+// Usefulness: verifies a quoted line under a bold heading keeps the plain heading's result, so the
+// bold form does not turn prose before the block into a report (issue #2020 review).
+test("parseReportBlock drops a quoted line under a bold heading as the plain heading does", () => {
+  const bold = [
+    "Narration.",
+    "**Checks**",
+    "> Unit tests passed.",
+    "Why: ok",
+    "Blockers: none",
+    "Verdict: accept",
+  ].join("\n");
+  const plain = bold.replace("**Checks**", "Checks");
+
+  expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
+  expect(parseReportBlock(bold)).toBeNull();
+  expect(missingRequiredReportLabels(bold)).toEqual(missingRequiredReportLabels(plain));
+  expect(acceptanceFailure(bold, parseReportBlock(bold))).toBe(
+    acceptanceFailure(plain, parseReportBlock(plain)),
+  );
+});
+
+// Usefulness: verifies a bold heading above prose with a Notes list and a duplicate Notes label
+// falls back to raw lines as the plain heading does, so the missing-Why diagnosis and the
+// copied-task check match (issue #2020 review).
+test("parseReportBlock matches the plain heading when a bold heading block falls back to raw lines", () => {
+  const bold = [
+    "**Why**",
+    "The suite passed.",
+    "Notes:",
+    "- first",
+    "Notes: second",
+    "Blockers: none",
+  ].join("\n");
+  const plain = bold.replace("**Why**", "Why");
+  const task = "Conclusion: done\nWhy: The suite passed.\nBlockers: none";
+
+  expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
+  expect(missingRequiredReportLabels(bold)).toEqual(missingRequiredReportLabels(plain));
+  expect(missingRequiredReportLabels(bold)).toEqual(["Why"]);
+  expect(copiedTaskReportLabels(parseReportBlock(bold), task)).toEqual(
+    copiedTaskReportLabels(parseReportBlock(plain), task),
+  );
+});
+
+// Usefulness: verifies the repair matcher reads a bold heading with prose, a dash item, a duplicate
+// Why label, and an empty Notes label as the plain heading does. The duplicate Why after the fold
+// fails the fold, so the raw-line comparison applies, and only that comparison accepts a repaired
+// Notes finding for a label the original named but left empty (ADR 0169, issue #2020 review).
+test("repairedReportMatches reads a bold heading as the plain heading on a fallback block", () => {
+  const bold = [
+    "Conclusion: done",
+    "**Why**",
+    "The suite passed.",
+    "- a",
+    "Why: duplicate",
+    "Notes:",
+    "Blockers: none",
+  ].join("\n");
+  const plain = bold.replace("**Why**", "Why");
+  const repaired = "Conclusion: done\nWhy: duplicate\nBlockers: none\nNotes: none";
+  const report = parseReportBlock(repaired);
+  const task = "Conclusion: done\nWhy: The suite passed.\nBlockers: none";
+
+  expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
+  expect(missingRequiredReportLabels(bold)).toEqual(missingRequiredReportLabels(plain));
+  expect(copiedTaskReportLabels(parseReportBlock(bold), task)).toEqual(
+    copiedTaskReportLabels(parseReportBlock(plain), task),
+  );
+  expect(repairedReportMatches(bold, repaired, report)).toBe(
+    repairedReportMatches(plain, repaired, report),
+  );
+  expect(repairedReportMatches(bold, repaired, report)).toBe(true);
+});
+
+// Usefulness: verifies the copied-task check reads a bold heading in the init task as main does,
+// so a colon-only report that repeats the task's Why value still names Why (issue #2020 review).
+test("copiedTaskReportLabels keeps the Why copied from a bold heading init task", () => {
+  const task = ["The fix is small.", "**Why**", "- Red test first.", "- The fix."].join("\n");
+  const report = parseReportBlock(
+    "Conclusion: done\nWhy: Red test first.; The fix.\nBlockers: none",
+  );
+
+  expect(copiedTaskReportLabels(report, task)).toEqual(["Why"]);
 });
 
 // Usefulness: verifies the exact issue #1989 shape parses, so no other test needs the full block.
