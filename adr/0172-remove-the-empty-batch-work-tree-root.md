@@ -29,7 +29,8 @@ When a batch moves into completed or failed, its finalization removes the work-t
 when both hold:
 
 - The recorded root is the default root derived from the recorded repository and batch id. A
-  root the user passed with --work-tree-root is never that root, so it stays empty or not.
+  root passed with --work-tree-root stays unless its recorded text is that derived path, which
+  the rule treats as the default root.
 - The root is a real, empty directory. A link or any remaining entry keeps it.
 
 A batch in any other final state, such as paused, waiting, interrupted, or a live run, keeps the
@@ -38,10 +39,9 @@ reads only the recorded root and the derived default.
 
 A resumed batch removes the root only when it moves the batch into completed or failed from a
 non-terminal state. The default root is derived from the manifest, so such a resume removes the
-same root. A resume of a batch that was already completed or failed when it started is a no-op
-and removes nothing, even when its default root is empty. A root that came from --work-tree-root
-stays, and a root that the user passed with the same text as the default path follows the default
-rule.
+same root. A resume of a batch that was already completed or failed when it started does not
+remove the root, even when that root is empty. A root that came from --work-tree-root stays,
+unless its recorded text is the derived default path.
 
 ### 2. The guard is shared with the audit root
 
@@ -77,10 +77,10 @@ last step of finalization, so it never removes a directory that a later step wri
 - A completed or failed batch that ran on the default root leaves no empty directory beside the
   repository.
 - A kept loop work tree keeps the root non-empty, so the root stays with the evidence.
-- A root the user passed stays, whether it is empty or not.
+- A root the user passed stays, empty or not, unless its text is the derived default path.
 - A link from the derived default path to a user root is not proof of the default root, so the
   user's directory stays.
-- A no-op resume of a batch that was already completed or failed changes no file system state.
+- A resume of a batch that was already completed or failed does not remove the root.
 - The audit and the batch share one empty-root guard, so a link-safety fix applies to both.
 - A root that a removal cannot delete within the same process is reported and stays; no retry is
   scheduled.
@@ -89,7 +89,7 @@ last step of finalization, so it never removes a directory that a later step wri
 
 1. **Remove the root at every final state.** Rejected. A paused, waiting, or interrupted batch
    resumes into the same root, and a live run still writes there. A resume of a batch that already
-   ended must change no file system state.
+   ended must not remove the root.
 2. **Record on the manifest whether the root came from the flag.** Rejected. The decision needs no
    field: the default root is derivable from the recorded repository and batch id, so a resume
    keeps the same rule.
