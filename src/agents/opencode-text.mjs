@@ -64,7 +64,7 @@ export function joinTextParts(events) {
   if (
     governing?.unidentified &&
     guardVerdict(joinMessages([governing])) === "accept" &&
-    labelLinePartCount(governing.parts) > 1
+    labelLinePartCount(projectBoldHeadings(governing.parts)) > 1
   ) {
     throw boundedError(UNIDENTIFIED_MESSAGE, messages);
   }
@@ -98,11 +98,49 @@ function joinMessages(messages) {
 }
 
 /**
- * Counts the parts that a label line of the closing block touches, in the join of `parts`. A line
- * that holds only `**Label**` inside one part and outside a fence is a label line too, read by the
- * parser's lone-heading predicate. The block starts at the last `Conclusion:` line, or at a lone
- * required label line or `Verdict:` line above it. A label line touches every part that holds one
- * of its characters, so a label cut across parts counts both. A line terminator or trailing space is no
+ * Builds the plain projection of `parts` for the split guard. Each line that holds only
+ * `**Label**` outside a fence loses its four marker characters, at the part that carries each one,
+ * wherever the split falls. Every other character stays, so a message with no such line projects
+ * to itself and the guard reads it as main reads it.
+ * @param {string[]} parts
+ * @returns {string[]}
+ */
+function projectBoldHeadings(parts) {
+  const spans = [];
+  const text = parts.reduce((joined, part) => {
+    const next = joinPart(joined, part);
+    spans.push([next.length - part.length, next.length]);
+    return next;
+  }, "");
+  const lines = text.split("\n");
+  const fenced = fencedLines(lines);
+  const removed = parts.map(() => new Set());
+  let offset = 0;
+  for (const [index, line] of lines.entries()) {
+    const start = offset;
+    offset += line.length + 1;
+    if (fenced[index] || !line.startsWith("**") || reportHeadingName(line) === null) continue;
+    const end = line.trimEnd().length;
+    for (const at of [start, start + 1, start + end - 2, start + end - 1]) {
+      const partIndex = spans.findIndex(([from, to]) => from <= at && at < to);
+      if (partIndex !== -1) removed[partIndex].add(at - spans[partIndex][0]);
+    }
+  }
+  return parts.map((part, index) =>
+    removed[index].size === 0
+      ? part
+      : part
+          .split("")
+          .filter((_, at) => !removed[index].has(at))
+          .join(""),
+  );
+}
+
+/**
+ * Counts the parts that a label line of the closing block touches, in the join of `parts`. The
+ * block starts at the last `Conclusion:` line, or at a lone required label line or `Verdict:`
+ * line above it. A label line touches every part that holds one of its
+ * characters, so a label cut across parts counts both. A line terminator or trailing space is no
  * character of the line. Text before the block and plain prose after it touch no label line.
  */
 function labelLinePartCount(parts) {
@@ -119,20 +157,7 @@ function labelLinePartCount(parts) {
     offset += line.length + 1;
     return { line, span };
   });
-  const fenced = fencedLines(lines.map(({ line }) => line));
-  // A bold heading counts only as a whole line inside one part and outside a fence, so a marker
-  // that spans parts adds no label line and a fenced line stays text. A plain label line keeps
-  // main's scan.
-  const isBoldLabelLine = (line, span, index) =>
-    !fenced[index] &&
-    reportHeadingName(line) !== null &&
-    spans.filter(([from, to]) => from < span[1] && span[0] < to).length === 1;
-  const last = lines.findLastIndex(
-    ({ line, span }, index) =>
-      BLOCK_START.test(line) ||
-      (isBoldLabelLine(line, span, index) &&
-        reportHeadingName(line).toLowerCase() === "conclusion"),
-  );
+  const last = lines.findLastIndex(({ line }) => BLOCK_START.test(line));
   const start =
     last === -1
       ? -1
@@ -141,13 +166,10 @@ function labelLinePartCount(parts) {
           last,
         );
   const touched = new Set();
-  for (const [index, { line, span }] of lines.entries()) {
-    if (index < start) continue;
-    if (start === -1 || (!BLOCK_LABEL_LINE.test(line) && !isBoldLabelLine(line, span, index))) {
-      continue;
-    }
-    spans.forEach(([from, to], partIndex) => {
-      if (from < span[1] && span[0] < to) touched.add(partIndex);
+  for (const { line, span } of lines.slice(Math.max(start, 0))) {
+    if (start === -1 || !BLOCK_LABEL_LINE.test(line)) continue;
+    spans.forEach(([from, to], index) => {
+      if (from < span[1] && span[0] < to) touched.add(index);
     });
   }
   return touched.size;

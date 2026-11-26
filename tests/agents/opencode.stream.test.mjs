@@ -933,6 +933,44 @@ test("opencode refuses an accept with a fenced bold conclusion before the verdic
   expect(error.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
 });
 
+// Usefulness: verifies the guard projects a bold Conclusion split inside its name to the plain
+// label, so the plain label spanning the parts refuses as main does (issue #2020 review).
+test("opencode refuses a bold conclusion split inside its name", async () => {
+  const plain = await runWithEvents(
+    textEvent("Conclu"),
+    textEvent("sion\ndone\nWhy: ok\nBlockers: none\nVerdict: accept"),
+  ).catch((err) => err);
+  const bold = await runWithEvents(
+    textEvent("**Conclu"),
+    textEvent("sion**\ndone\nWhy: ok\nBlockers: none\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(plain).toBeInstanceOf(Error);
+  expect(bold).toBeInstanceOf(Error);
+  expect(bold.message.split("\n")[0]).toBe(plain.message.split("\n")[0]);
+  expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
+// Usefulness: verifies the guard projects every whole-line bold heading in the parts, so the plain
+// projection decides the result when the headings arrive in later parts (issue #2020 review).
+test("opencode gives main's guard result for split bold headings in later parts", async () => {
+  const plain = await runWithEvents(
+    textEvent("Narration.\n"),
+    textEvent("Conclusion\ndone\nWhy\n"),
+    textEvent("ok\nChecks\nok\nVerdict: accept"),
+  ).catch((err) => err);
+  const bold = await runWithEvents(
+    textEvent("Narration.\n**"),
+    textEvent("Conclusion**\ndone\n**Why**\n"),
+    textEvent("ok\n**Checks**\nok\nVerdict: accept"),
+  ).catch((err) => err);
+
+  expect(plain).toBeInstanceOf(Error);
+  expect(bold).toBeInstanceOf(Error);
+  expect(bold.message.split("\n")[0]).toBe(plain.message.split("\n")[0]);
+  expect(bold.message.split("\n")[0]).toBe(UNIDENTIFIED_REFUSAL);
+});
+
 // Usefulness: verifies an opening `**` that ends one part adds no bold label line, while main still
 // refuses because the Verdict label line spans the parts (issue #2020 review).
 test("opencode keeps main's guard result for partial bold marks", async () => {
