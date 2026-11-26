@@ -1,9 +1,9 @@
 // The one foreground supervisor of a batch (ADR 0106 decisions 1, 4, 5, 6, 9, 10, 12). It launches
 // one headless child per item, prints progress on stderr, and returns one summary for stdout.
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { canonicalPath } from "../lib/canonical-path.mjs";
+import { canonicalPath, samePath } from "../lib/canonical-path.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "../lib/checks/gh-api.mjs";
 import { boundedRunner } from "../lib/checks/bounded-call.mjs";
 import { declaredPrFromTranscript, undeclaredPrFromTranscript } from "../lib/gate.mjs";
@@ -15,6 +15,7 @@ import {
   startTimeCache,
 } from "../lib/process-identity.mjs";
 import { logError, logWarn } from "../lib/log.mjs";
+import { removeEmptyDirectory } from "./audit-store.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 import { readGhJson } from "./gh-read.mjs";
 import { createOwnerDecisions, readAnswer, readDecision } from "./decisions.mjs";
@@ -207,6 +208,9 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   let manifest;
   const loops = new Map();
   let start = true;
+  // A resume of a batch that had already reached completed or failed changes no file system
+  // state, so it never runs the root removal (issue #2022 review).
+  let terminalAtStart = false;
   let interrupted = false;
   let hard = false;
   // A second SIGINT releases the throw cleanup from its wait, as decision 9 requires.
@@ -310,6 +314,28 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   }
   gh = boundedRunner(gh, deps.ghTimeoutMs ?? DEFAULT_READ_TIMEOUT_MS, controller.signal);
 
+  // The default work-tree root of a batch, derived from the manifest so a resume names it too.
+  const defaultWorkTreeRoot = () =>
+    join(dirname(manifest.repo), `${basename(manifest.repo)}-batch-${manifest.id}`);
+
+  // Removes the batch root only when the batch ran on the default root and it is empty. The
+  // recorded path and the derived default are compared as text, without resolving a link: a
+  // canonical comparison would treat a link from the default path to a user root as proof that
+  // the batch used the default. The lstat guard reads the derived path itself, so a link there
+  // is never removed or followed. A root the user passed with --work-tree-root is not the
+  // derived default and stays.
+  const removeDefaultWorkTreeRoot = async () => {
+    if (typeof manifest.repo !== "string" || typeof manifest.workTreeRoot !== "string") return;
+    const expected = defaultWorkTreeRoot();
+    if (!samePath(resolve(manifest.workTreeRoot), resolve(expected))) return;
+    const removal = await removeEmptyDirectory(expected);
+    if (removal.removed) {
+      progress(`batch ${manifest.id}: removed the empty work-tree root`);
+    } else if (removal.reason !== null) {
+      logWarn(`batch ${manifest.id}: kept the work-tree root: ${removal.reason}`);
+    }
+  };
+
   // Every path that ends the batch uses this finalization.
   // A resume after an answer reports the same status, summary, exit code, and one completion
   // notification.
@@ -354,6 +380,9 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         }))
       ).manifest;
     }
+    // A batch that was already completed or failed when a resume started is a no-op: its removal
+    // already ran or never applied, and a resume must change no file system state.
+    if (complete && !terminalAtStart) await removeDefaultWorkTreeRoot();
     return {
       exitCode: exitCodeOf(manifest, loops),
       summary: summaryOf(
@@ -394,6 +423,7 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     manifest = await readManifest(runsRoot, id);
     if (manifest === null) throw Object.assign(new Error(`No batch ${id}.`), { usage: true });
     start = false;
+    terminalAtStart = manifest.status === "completed" || manifest.status === "failed";
     const itemsByKey = new Map((manifest.items ?? []).map((item) => [item.key, item]));
     for (const issue of manifest.issues) {
       let loop = await readLoop(runsRoot, id, issue);

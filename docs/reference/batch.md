@@ -22,7 +22,7 @@ agent-loop batch answer --batch <id> --decision <decision id> --option <key>
 
 A missing, malformed, or duplicate identity, an unknown kind or mode, and a malformed item each exit 2 before any state write. A `task` item runs on branch `batch/<batch id>/task-<id>` in the work tree `task-<id>`. In `work-first` and `review-first`, its worker pushes that branch and opens one pull request whose body states the task and holds no closing keyword. The loop then ends through `--require-ci` for that pull request.
 
-`--base` defaults to the remote default branch and is refused when `origin/<base>` does not exist. `--work-tree-root` defaults to `<repo parent>/<repo name>-batch-<batch id>`. A root inside any Git work tree, or one the batch cannot write, is refused.
+`--base` defaults to the remote default branch and is refused when `origin/<base>` does not exist. `--work-tree-root` defaults to `<repo parent>/<repo name>-batch-<batch id>`. A root inside any Git work tree, or one the batch cannot write, is refused. A batch that moves into `completed` or `failed` removes the root when it is empty and its recorded path is the derived default; a root passed with `--work-tree-root` otherwise stays. A resume of a batch that had already ended does not remove the root.
 
 The task template and a per-item `task` accept `{issue}`, `{title}`, `{branch}`, and `{repo}`. An unknown placeholder is a usage error. A template without `{issue}`, when an issue item uses it, is a usage error; a per-item `task` needs no `{issue}`. For a free-text task, `{issue}` is its identity `task-<id>`, and `{title}` is its text. The default issue template names the issue, the branch push, and the closing pull request. A pull request item uses a review-oriented default template, and a task item delivers its own text plus the push and pull-request instructions.
 
@@ -158,6 +158,8 @@ A loop that exits 4 is `needs-owner` with reason `pr-head-unresolved`. It keeps 
 Cleanup removes a work tree only for a `succeeded` loop, and only after every check passes. The path is the recorded path under the batch root and not the main work tree, and `git worktree list` names it. The recorded branch is checked out, the device and inode still match, and the tree is clean. Every local commit is pushed, merged, or on the base branch. No other live process holds the claim, and no live run lock names the tree.
 
 A failed, interrupted, `needs-owner`, or live loop keeps its tree, and so does a success whose proof or removal fails. When cleanup succeeds, the work tree and claim are removed. The branch, pull request, transcript, log, and checkpoint stay.
+
+When a batch moves into `completed` or `failed`, it removes the root only when the root is empty and the recorded path is the derived default. A remaining entry, such as a kept loop work tree, keeps the root, and a root passed with `--work-tree-root` otherwise stays. The recorded path and the derived default are compared as text without resolving a link, so a link at the default path is never removed or followed, and only a resume that moves a non-terminal batch into an end state runs the removal.
 
 The merged proof reads the declared pull request, or the undeclared one when no declaration exists.
 

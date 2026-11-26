@@ -129,3 +129,4 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0167 — [Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md) — partially-superseded — Partially superseded by [ADR 0168](0168-fold-a-plain-label-list-item.md).
 - 0168 — [Fold a closing-block list item that opens with a plain label name](0168-fold-a-plain-label-list-item.md) — accepted
 - 0169 — [Name the outcome of a repair that does not recover a closing block](0169-name-the-outcome-of-a-repair-that-does-not-recover-a-block.md) — accepted
+- 0172 — [Remove the empty batch work-tree root when a batch ends](0172-remove-the-empty-batch-work-tree-root.md) — accepted

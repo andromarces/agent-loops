@@ -270,18 +270,40 @@ async function auditWorkTreeBlocker(
   return null;
 }
 
+/**
+ * Removes `root` only when it is a real, empty directory. A link, a remaining entry, or a missing
+ * root keeps it, and `rmdir` never follows a link.
+ * @returns {Promise<{ removed: boolean, reason: string | null }>} `reason` names a read or removal
+ *   error other than a missing or non-empty root
+ */
+export async function removeEmptyDirectory(root) {
+  try {
+    const found = await lstat(root);
+    if (!found.isDirectory() || found.isSymbolicLink()) return { removed: false, reason: null };
+  } catch (err) {
+    return {
+      removed: false,
+      reason: err?.code === "ENOENT" ? null : `the root read failed: ${err?.message ?? err}`,
+    };
+  }
+  try {
+    await rmdir(root);
+    return { removed: true, reason: null };
+  } catch (err) {
+    const kept = err?.code === "ENOENT" || err?.code === "ENOTEMPTY" || err?.code === "EEXIST";
+    return {
+      removed: false,
+      reason: kept ? null : `the root removal failed: ${err?.message ?? err}`,
+    };
+  }
+}
+
 // Removes the audit root only when it is the recorded parent, a real directory, and empty. A link
 // or any remaining entry keeps it, and rmdir never follows a link.
 async function removeEmptyAuditRoot(workTree, workTreeRoot) {
   if (typeof workTreeRoot !== "string" || typeof workTree?.path !== "string") return;
   if (dirname(resolve(workTree.path)) !== resolve(workTreeRoot)) return;
-  try {
-    const found = await lstat(workTreeRoot);
-    if (!found.isDirectory() || found.isSymbolicLink()) return;
-    await rmdir(workTreeRoot);
-  } catch {
-    // A remaining entry, a link, or a failed removal keeps the root.
-  }
+  await removeEmptyDirectory(workTreeRoot);
 }
 
 /**
