@@ -90,8 +90,9 @@ function fencedLines(lines) {
  * The forms are `**Label:**` and a line that holds only `**Label**`. A bold label inside a fenced
  * code block stays text. With `boldLabels` false, the bold lines are unchanged. A column-0 line
  * that holds only a report label name reads as that label from the last `Conclusion:` line or lone
- * `Conclusion` line to the end, so an earlier lone label name stays prose. The fenced flags come
- * with the lines, so a caller never scans the fences twice.
+ * `Conclusion` line to the end, so an earlier lone label name stays prose. A bold heading from
+ * that start reads as the lone label too, so it takes the lines under it as the plain form does.
+ * The fenced flags come with the lines, so a caller never scans the fences twice.
  * @param {string} text
  * @param {boolean} [boldLabels]
  * @returns {{ lines: string[], fenced: boolean[] }}
@@ -99,6 +100,7 @@ function fencedLines(lines) {
 function normalizedReportLines(text, boldLabels = true) {
   const lines = boldLabels ? text.split(/\r?\n/) : text.split("\n");
   const fenced = fencedLines(lines);
+  const boldHeadings = [];
   const normalized = !boldLabels
     ? lines
     : lines.map((line, index) => {
@@ -109,11 +111,23 @@ function normalizedReportLines(text, boldLabels = true) {
         if (!isKnownLabelLine(line, fenced[index])) {
           return `x${line}`;
         }
+        if (boldHeading) {
+          boldHeadings.push(index);
+        }
         return boldHeading
           ? line.replace(BOLD_HEADING_LABEL_LINE, "$1:")
           : line.replace(BOLD_LABEL_LINE, "$1:$2");
       });
   const start = conclusionStart(normalized, fenced);
+  // A bold heading at or after the plain heading start reads as the lone plain label, so the
+  // plain heading path supplies the non-blank lines under it and no second copy of those rules
+  // exists. Before that start, it stays a label line, so a response without a Conclusion line
+  // keeps the block start and the earlier prose that main reads.
+  for (const index of boldHeadings) {
+    if (index >= start) {
+      normalized[index] = normalized[index].replace(/:$/, "");
+    }
+  }
   return { lines: plainHeadingLines(normalized, fenced, start), fenced };
 }
 

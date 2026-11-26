@@ -2566,6 +2566,31 @@ test("parseReportBlock keeps a bold heading label inside a fenced code block as 
   });
 });
 
+// Usefulness: verifies a column-0 bold heading takes the prose lines under it as the plain lone
+// heading does, so the documented form keeps its report (issue #2020). No other test covers a bold
+// heading above prose.
+test("parseReportBlock reads prose under a bold heading label", () => {
+  const response = [
+    "Conclusion: done",
+    "**Why**",
+    "The change is small.",
+    "",
+    "Blockers: none",
+    "Checks: npm test passed",
+  ].join("\n");
+  const expected = {
+    conclusion: "done",
+    why: "The change is small.",
+    blockers: "none",
+    checks: "npm test passed",
+    notes: null,
+    deferred: null,
+  };
+  expect(parseReportBlock(response)).toEqual(expected);
+  expect(parseReportBlock(response.replace("**Why**", "Why"))).toEqual(expected);
+  expect(missingRequiredReportLabels(response)).toEqual([]);
+});
+
 // Usefulness: verifies the exact issue #1989 shape parses, so no other test needs the full block.
 test("parseReportBlock reads the issue #1989 plain heading labels", () => {
   const response = [
