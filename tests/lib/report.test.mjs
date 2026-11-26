@@ -2493,14 +2493,13 @@ test("parseReportBlock reads the issue #1585 bold heading labels", () => {
   });
 });
 
-// Usefulness: verifies `**Conclusion** some text` reads as the plain line with trailing text, so
-// it supplies the same prose and never a label (issue #2020 review).
-test("parseReportBlock reads a bold heading with trailing text as the plain line", () => {
-  const bold = "**Conclusion** some text\nWhy: ok\nBlockers: none";
-  const plain = "Conclusion some text\nWhy: ok\nBlockers: none";
+// Usefulness: verifies a bold label with trailing text stays prose as main reads it, so it never
+// supplies the conclusion (issue #2020 review).
+test("parseReportBlock keeps a bold label with trailing text as prose", () => {
+  const response = "**Conclusion** The checks passed.\nWhy: ok\nBlockers: none";
 
-  expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
-  expect(parseReportBlock(bold)).toMatchObject({ conclusion: "Conclusion some text" });
+  expect(parseReportBlock(response)).toBeNull();
+  expect(missingRequiredReportLabels(response)).toEqual(["Conclusion"]);
   expect(
     parseReportBlock("Conclusion: done\nWhy: ok\nBlockers: none\n**Notes** some text"),
   ).toMatchObject({ notes: null });

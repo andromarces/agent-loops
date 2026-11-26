@@ -32,11 +32,6 @@ const LABEL_PATTERN_BY_KEY = new Map(
 const BOLD_LABEL = `\\*\\*(?:${LABEL_NAMES}):\\*\\*`;
 const BOLD_LABEL_LINE = new RegExp(`^\\*\\*(${LABEL_NAMES}):\\*\\*(.*)$`, "i");
 
-// A column-0 `**Label**` at the start of a line, with no colon directly after the closing marks.
-// Such a line reads as its plain form, so trailing text makes the same prose line the plain form
-// makes. A colon after the marks keeps them, because `**Label**:` is a decorated label.
-const BOLD_HEADING_START = new RegExp(`^\\*\\*(${LABEL_NAMES})\\*\\*(?!:)`, "i");
-
 // A column-0 line that holds only a label name, for example `Conclusion`, or only `**Label**`, for
 // example `**Conclusion**`, with optional trailing whitespace. Only the six report labels gain
 // these forms. The first capture group holds the plain name, the second the bold name.
@@ -94,9 +89,7 @@ function fencedLines(lines) {
  * as written, because the plain heading path reads it. A column-0 line that holds only a report
  * label name reads as that label from the last `Conclusion:` line or lone `Conclusion` line to the
  * end, so an earlier lone label name stays prose. A bold heading at that start takes the lines
- * under it as the plain form does, because the plain heading path reads both forms. A `**Label**`
- * at the start of a line with trailing text reads as the plain name too, so it supplies the same
- * prose line. With `boldLabels` false, only the `**Label:**` colon form stays bold. The fenced
+ * under it as the plain form does, because the plain heading path reads both forms. The fenced
  * flags come with the lines, so a caller never scans the fences twice. With
  * `legacyBoldHeadings`, a line that holds only `**Label**` becomes `Label:` before the plain
  * heading path, as an init task was parsed before the heading forms were unified.
@@ -108,21 +101,20 @@ function fencedLines(lines) {
 function normalizedReportLines(text, boldLabels = true, legacyBoldHeadings = false) {
   const lines = boldLabels ? text.split(/\r?\n/) : text.split("\n");
   const fenced = fencedLines(lines);
-  const normalized = lines.map((line, index) => {
-    const heading = legacyBoldHeadings ? boldHeadingName(line) : null;
-    if (heading !== null) {
-      return fenced[index] ? `x${line}` : `${heading}:`;
-    }
-    if (boldLabels && BOLD_LABEL_LINE.test(line)) {
-      return isKnownLabelLine(line, fenced[index])
-        ? line.replace(BOLD_LABEL_LINE, "$1:$2")
-        : `x${line}`;
-    }
-    // The bold marks around a label name at a line start are invisible to the plain heading path,
-    // so an inline name supplies the same prose line as the plain form. The legacy task parse
-    // keeps the line as main read it.
-    return legacyBoldHeadings ? line : line.replace(BOLD_HEADING_START, "$1");
-  });
+  const normalized = !boldLabels
+    ? lines
+    : lines.map((line, index) => {
+        const heading = legacyBoldHeadings ? boldHeadingName(line) : null;
+        if (heading !== null) {
+          return fenced[index] ? `x${line}` : `${heading}:`;
+        }
+        if (!BOLD_LABEL_LINE.test(line)) {
+          return line;
+        }
+        return isKnownLabelLine(line, fenced[index])
+          ? line.replace(BOLD_LABEL_LINE, "$1:$2")
+          : `x${line}`;
+      });
   const start = conclusionStart(normalized, fenced);
   return { lines: plainHeadingLines(normalized, fenced, start), fenced };
 }

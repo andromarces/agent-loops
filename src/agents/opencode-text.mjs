@@ -47,10 +47,10 @@ const ERROR_TEXT_LIMIT = 4000;
 /**
  * Joins the text parts of a turn into one response. Parts group into messages by `part.messageID`
  * (parts without a valid id form one unidentified message). A part glues to the one before it,
- * except that a part opening a report label starts its own line, by the plain heading predicate
- * with the bold heading marks read as plain, and a new message starts its own line. The last
- * message that holds a closing block attempt governs alone: earlier attempt-holding messages drop,
- * messages without an attempt stay.
+ * except that a part opening a report label starts its own line, and a bold heading starts its
+ * own line only when its plain line holds the heading alone. A new message starts its own line.
+ * The last message that holds a closing block attempt governs alone: earlier attempt-holding
+ * messages drop, messages without an attempt stay.
  * The error text is redacted (ADR 0017) and bounded to its last 4000 code units. A later
  * redaction pass with a different environment can grow it past that bound.
  * @throws {Error} when two attempt-holding messages interleave in the stream, or when the
@@ -117,15 +117,14 @@ function joinMessages(messages) {
 }
 
 /**
- * Joins the parts of one message onto `text` and returns the text and the span of each part in it.
- * A part opens a line of its own when a plain part at that point opens a report label line, which
- * is main's rule. The bold heading form decides on the message text with the `**` marks removed,
- * so a marker in its own part or one that opened in an earlier part breaks in the same place as
- * the plain form, and the break moves before the opening marks. Text before the marks is the same
- * whether the heading is one part or several.
+ * Joins the parts of one message onto `text`. A part opens a line of its own when a plain part at
+ * that point opens a report label line, which is main's rule. A bold heading breaks only when its
+ * plain line holds the heading alone, so a line with text on either side of the marks stays inline
+ * as main leaves the bold stream. Returns the joined text and, for the closing-block guard, the
+ * plain joined text with the span of each part in it.
  * @param {string} text the joined text before this message
  * @param {string[]} parts the text parts of the message
- * @returns {{ text: string, spans: number[][] }}
+ * @returns {{ text: string, plainText: string, plainSpans: number[][] }}
  */
 function joinParts(text, parts) {
   const origin = parts.join("");
@@ -152,8 +151,8 @@ function joinParts(text, parts) {
     }
   }
   const plain = plainOrigins.map((index) => origin[index]).join("");
-  // The name's first plain position maps to the original index of its opening marks, so a break
-  // before the name moves before the marks. Closing marks before another label never move it.
+  // The name's first plain position maps to the original index of its opening marks, so a heading
+  // line breaks before the marks. Closing marks before another label never move it.
   const openingByPlain = new Map(
     headings.map(([nameStart, opening]) => [plainByOrigin[nameStart], opening]),
   );
@@ -163,45 +162,77 @@ function joinParts(text, parts) {
     bounds.push([bound, bound + part.length]);
     bound += part.length;
   }
-  const breaks = new Set();
+  const plainBreaks = [];
   let endsWithNewline = text.endsWith("\n");
   for (const [from, to] of bounds) {
     const plainPart = plain.slice(keptBefore[from], keptBefore[to]);
     if (!endsWithNewline && opensLabelLine(plainPart)) {
-      const plainAt = keptBefore[from];
-      breaks.add(openingByPlain.get(plainAt) ?? plainOrigins[plainAt]);
+      plainBreaks.push(keptBefore[from]);
     }
     if (plainPart.length > 0) {
       endsWithNewline = plainPart.endsWith("\n");
     }
   }
+  // The plain line from a break, cut at the next newline or the next inserted break.
+  const lineEnd = (at) => {
+    const nextBreak = plainBreaks.find((position) => position > at) ?? plain.length;
+    const newline = plain.indexOf("\n", at);
+    return newline === -1 || newline > nextBreak ? nextBreak : newline;
+  };
+  const breaks = new Set();
+  for (const at of plainBreaks) {
+    const opening = openingByPlain.get(at);
+    if (opening === undefined) {
+      breaks.add(plainOrigins[at]);
+    } else if (isLoneHeading(plain.slice(at, lineEnd(at)))) {
+      // A bold heading with text on either side in its line is no heading, and main keeps it inline.
+      breaks.add(opening);
+    }
+  }
   const inserted = [...breaks].sort((left, right) => left - right);
-  let joined = "";
+  return {
+    text: `${text}${insertBreaks(origin, inserted)}`,
+    plainText: insertBreaks(plain, plainBreaks),
+    plainSpans: bounds.map(([from, to]) => spanOf(keptBefore[from], keptBefore[to], plainBreaks)),
+  };
+}
+
+/** True when `text` trimmed is one of the six report label names. */
+function isLoneHeading(text) {
+  const name = text.trim().toLowerCase();
+  return REPORT_LABEL_NAMES.some((label) => label.toLowerCase() === name);
+}
+
+/** `value` with a newline at each ascending position. */
+function insertBreaks(value, positions) {
+  let out = "";
   let cursor = 0;
-  for (const at of inserted) {
-    joined += `${origin.slice(cursor, at)}\n`;
+  for (const at of positions) {
+    out += `${value.slice(cursor, at)}\n`;
     cursor = at;
   }
-  joined += origin.slice(cursor);
-  const spans = bounds.map(([from, to]) => {
-    const start =
-      to > from
-        ? from + inserted.filter((at) => at <= from).length
-        : from + inserted.filter((at) => at < from).length;
-    return [start + text.length, to + inserted.filter((at) => at < to).length + text.length];
-  });
-  return { text: `${text}${joined}`, spans };
+  return out + value.slice(cursor);
+}
+
+/** The span of `value[from, to)` in the text that `insertBreaks` produced from `positions`. */
+function spanOf(from, to, positions) {
+  const first =
+    to > from
+      ? from + positions.filter((at) => at <= from).length
+      : from + positions.filter((at) => at < from).length;
+  return [first, to + positions.filter((at) => at < to).length];
 }
 
 /**
- * Counts the parts that a label line of the closing block touches, in the join of `parts`. The
- * block starts at the last `Conclusion:` line, or at a lone required label line or `Verdict:`
- * line above it. A label line touches every part that holds one of its
- * characters, so a label cut across parts counts both. A line terminator or trailing space is no
- * character of the line. Text before the block and plain prose after it touch no label line.
+ * Counts the parts that a label line of the closing block touches, in the plain join of `parts`.
+ * The plain join drops the bold heading marks, so the opening `**` of a heading adds no part that
+ * main's plain line does not touch. The block starts at the last `Conclusion:` line, or at a lone
+ * required label line or `Verdict:` line above it. A label line touches every part that holds one
+ * of its characters, so a label cut across parts counts both. A line terminator or trailing space
+ * is no character of the line. Text before the block and plain prose after it touch no label line.
  */
 function labelLinePartCount(parts) {
-  const { text, spans } = joinParts("", parts);
+  const { plainText: text, plainSpans: spans } = joinParts("", parts);
 
   let offset = 0;
   const lines = text.split("\n").map((line) => {

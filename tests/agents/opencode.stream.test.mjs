@@ -211,26 +211,47 @@ test("opencode joins a bold heading part as the plain heading part", async () =>
   expect(parseReportBlock(bold)).toMatchObject({ blockers: "none" });
 });
 
-// Usefulness: verifies an inline bold heading name supplies the plain heading's prose value, so a
-// split sentence under `Why` keeps the words after `Notes` (issue #2020 review).
-test("opencode keeps an inline bold heading name in the plain heading's prose value", async () => {
+// Usefulness: verifies an inline bold label name with text on either side stays inline, so the
+// whole sentence remains the Why value as main joins it (issue #2020 review).
+test("opencode keeps an inline bold label name in the Why value", async () => {
+  const parts = [
+    "Conclusion: done\n",
+    "Why: The memo emphasizes ",
+    "**Notes**",
+    " for readers.\n",
+    "Blockers: none\n",
+    "Checks: pnpm test",
+  ];
+  const split = await runWithEvents(...parts.map((part) => textEvent(part, "msg-1")));
+  const single = await runWithText(parts.join(""));
+
+  expect(split).toBe(single);
+  expect(parseReportBlock(split)).toEqual({
+    conclusion: "done",
+    why: "The memo emphasizes **Notes** for readers.",
+    blockers: "none",
+    checks: "pnpm test",
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a bold Conclusion whose opening marks end one unidentified part does not
+// hand its label line to that part, so the accept stays as main's plain equivalent (issue #2020
+// review).
+test("opencode accepts a bold conclusion whose opening marks end the first part", async () => {
   const bold = await runWithEvents(
-    textEvent("**Conclusion**\ndone\n**Why**\nok\n", "msg-1"),
-    textEvent("See ", "msg-1"),
-    textEvent("**Notes**", "msg-1"),
-    textEvent(" for context.\n", "msg-1"),
-    textEvent("Blockers: none", "msg-1"),
+    textEvent("Narration.\n**"),
+    textEvent("Conclusion**\ndone\nWhy: ok\nBlockers: none\nVerdict: accept"),
   );
   const plain = await runWithEvents(
-    textEvent("Conclusion\ndone\nWhy\nok\n", "msg-1"),
-    textEvent("See ", "msg-1"),
-    textEvent("Notes", "msg-1"),
-    textEvent(" for context.\n", "msg-1"),
-    textEvent("Blockers: none", "msg-1"),
+    textEvent("Narration.\n"),
+    textEvent("Conclusion\ndone\nWhy: ok\nBlockers: none\nVerdict: accept"),
   );
 
+  expect(typeof bold).toBe("string");
   expect(parseReportBlock(bold)).toEqual(parseReportBlock(plain));
-  expect(parseReportBlock(bold)).toMatchObject({ why: "ok See Notes for context." });
+  expect(parseReportBlock(bold)).toMatchObject({ conclusion: "done", why: "ok", blockers: "none" });
 });
 
 // Usefulness: verifies a bold heading whose marks arrive in their own parts joins as the plain
