@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   existsSync,
   lstatSync,
@@ -29,7 +30,7 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
-import { startTimeCache } from "../../src/lib/process-identity.mjs";
+import { ownerAlive, processStartTime, startTimeCache } from "../../src/lib/process-identity.mjs";
 import { readProcessCommands, readProcessTable } from "../../src/lib/process-ancestry.mjs";
 import { statePaths } from "../../src/lib/runstate.mjs";
 import { lockHeld, readLockOwner } from "../../src/lib/state-lock.mjs";
@@ -50,6 +51,7 @@ import {
 } from "./helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { deadPid, processExists } from "../process-helpers.mjs";
+import { within } from "../wait-helpers.mjs";
 
 const newRunRepo = () => newCleanRunRepo(gitDouble);
 
@@ -171,14 +173,92 @@ setInterval(() => {}, 1000);
 setTimeout(() => process.exit(0), 60000);
 `;
 
+// The killed-turn wait keeps main's 5 s bound and 50 ms poll. The recovery call and the state
+// read after the kill share one bound below the case's 60 s limit.
+const DEAD_TURN_WAIT_MS = 5000;
+const DEAD_TURN_POLL_MS = 50;
+const POST_KILL_BOUND_MS = 15_000;
+
+/** Races one liveness read against the time left in the wait, without a loose rejection. */
+function readLiveness(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise.then(
+      (value) => ({ value }),
+      (error) => ({ error: error instanceof Error ? error.message : String(error) }),
+    ),
+    new Promise((resolve) => {
+      const bound = Math.max(0, ms);
+      timer = setTimeout(
+        () => resolve({ error: `${label} did not finish within ${Math.round(bound)} ms` }),
+        bound,
+      );
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * The liveness of the killed turn: `lockHeld` for the state lock, and `ownerAlive` with the
+ * recorded start time for each child. Each read is bounded by `boundMs`, so a slow start-time
+ * query cannot outlast the wait.
+ */
+async function readTurnLiveness({ lockFile, lockPid, child, fake }, cache, boundMs) {
+  const [lock, childAlive, fakeAlive] = await Promise.all([
+    readLiveness(
+      lockHeld(lockFile, cache),
+      boundMs,
+      `the state lock read for pid ${lockPid ?? "none"}`,
+    ),
+    readLiveness(ownerAlive(child, cache), boundMs, `the child liveness read for pid ${child.pid}`),
+    readLiveness(
+      ownerAlive(fake, cache),
+      boundMs,
+      `the fake codex liveness read for pid ${fake.pid}`,
+    ),
+  ]);
+  return { lock, child: childAlive, fake: fakeAlive };
+}
+
+// True when the wait can stop: the dispatcher exited, the lock reads free, and neither recorded
+// child process reads as alive. The dispatcher pid itself is not polled, because a reused pid
+// would hold the wait after the lock had already read free.
+function turnGone(dispatcherExited, reads, waitForFake = true) {
+  return (
+    dispatcherExited &&
+    reads.lock.value === false &&
+    reads.child.value === false &&
+    (!waitForFake || reads.fake.value === false)
+  );
+}
+
+// The pids, liveness reads, and elapsed time that every failure after the kill reports.
+function describeTurn({ turnDir, lockPid, child, fake }, reads, dispatcherExited, elapsedMs) {
+  const status = (read) =>
+    read === undefined
+      ? "not read"
+      : read.error !== undefined
+        ? `not read (${read.error})`
+        : read.value
+          ? "alive"
+          : "gone";
+  return (
+    `the turn directory is ${existsSync(turnDir) ? "present" : "absent"} ${Math.round(elapsedMs)} ms after the kill; ` +
+    `state lock owner pid ${lockPid ?? "none"} ${status(reads?.lock)}; ` +
+    `child pid ${child.pid} ${status(reads?.child)}; ` +
+    `fake codex pid ${fake.pid} ${status(reads?.fake)}; ` +
+    `dispatcher ${dispatcherExited ? "exited" : "not exited"}`
+  );
+}
+
 /**
  * Starts a real `role dispatch` whose Codex turn hangs and kills the dispatch with SIGKILL mid-turn,
  * once the state file holds the child of the turn. The orphaned fake `codex` is ended unless
  * `keepChild` is set, and teardown ends it either way. Waits, with a bound, until the killed
- * dispatch and its recorded child no longer read as live, and until the state lock reads free to
- * the rule that the next call uses, because the next call reads both as a lock owner and as a child
- * of the dead turn. Returns the work tree, the temporary directory of the turn (as the turn child
- * saw it), the temporary root that holds it, the pid of the fake `codex`, and the time of the kill.
+ * dispatch and its recorded child no longer read as live by the rule that the state lock and the
+ * turn removal use, because the next call reads both as a lock owner and as a child of the dead
+ * turn. Returns the work tree, the temporary directory of the turn (as the turn child saw it), the
+ * temporary root that holds it, the pid of the fake `codex`, the time of the kill, and a function
+ * that reports the pids, liveness reads, and elapsed time of a later failure.
  */
 async function killedDispatch({
   keepChild = false,
@@ -253,18 +333,22 @@ async function killedDispatch({
     dispatcherExited = true;
   });
   let turn;
-  let recordedChildPid;
+  let recordedChild;
   await vi.waitFor(
     async () => {
       turn = JSON.parse(await readFile(report, "utf8").catch(() => "null"));
       expect(turn?.pid).toBeGreaterThan(0);
       // The dispatch has recorded the child, so the kill leaves the record a recovery reads.
       const state = await readRepoState(repo).catch(() => null);
-      recordedChildPid = state?.lastDispatch?.turnTmpdir?.child?.pid;
-      expect(recordedChildPid).toBeGreaterThan(0);
+      recordedChild = state?.lastDispatch?.turnTmpdir?.child;
+      expect(recordedChild?.pid).toBeGreaterThan(0);
     },
     { timeout: startupMs, interval: 100 },
   );
+  // The lock owner is the dispatcher, and the fake codex is the child of the turn. Both start
+  // times are read before the kill, so the wait can apply the same rule as the state lock.
+  const lockOwner = await readLockOwner(lockFile);
+  const fake = { pid: turn.pid, startTime: (await processStartTime(turn.pid)) ?? undefined };
   const killedAt = Date.now();
   child.kill("SIGKILL");
   if (!keepChild && processExists(turn.pid)) {
@@ -275,28 +359,47 @@ async function killedDispatch({
     }
   }
   // Windows keeps a killed process in the process table while a handle to it is open. The next call
-  // reads the dispatch pid as the state-lock owner and the recorded child as the child of the dead
+  // reads the dispatcher pid as the state-lock owner and the recorded child as the child of the dead
   // turn, so either one that still looks live refuses the lock or keeps the turn directory. The
-  // state lock uses a pid and a start-time stamp, so the wait reads the lock with that same rule
-  // instead of the pid-only check alone. The dispatcher exit waits in the same bound, so a late exit
-  // event cannot hold the case past it.
-  const gone = keepChild ? [child.pid] : [child.pid, turn.pid, recordedChildPid];
+  // wait uses the state lock's rule (`lockHeld`) and the turn removal's rule (`ownerAlive`) for
+  // every pid, and each read is bounded by the time left in the wait. The dispatcher exit waits in
+  // the same bound, so a late exit event cannot hold the case past it.
+  const turnLiveness = {
+    turnDir: turn.dir,
+    lockFile,
+    lockPid: lockOwner?.pid,
+    child: { pid: recordedChild.pid, startTime: recordedChild.startTime },
+    fake,
+  };
   const lockCache = startTimeCache();
-  await vi.waitFor(
-    async () => {
-      const owner = await readLockOwner(lockFile);
-      expect(
-        {
-          exited: dispatcherExited,
-          live: gone.filter((pid) => processExists(pid)),
-          lockHeld: await lockHeld(lockFile, lockCache),
-        },
-        `the turn directory is ${existsSync(turn.dir) ? "present" : "absent"} ${Date.now() - killedAt} ms after the kill; the killed dispatch has not exited, a killed process still reads as live, or the state lock still reads a live owner (pid ${owner?.pid ?? "none"}, start time ${owner?.startTime ?? "unknown"})`,
-      ).toEqual({ exited: true, live: [], lockHeld: false });
-    },
-    { timeout: 5000, interval: 50 },
-  );
-  return { repo, turnDir: turn.dir, tmpRoot, childPid: turn.pid, killedAt };
+  const deadline = performance.now() + DEAD_TURN_WAIT_MS;
+  let reads;
+  for (;;) {
+    const remaining = Math.max(0, deadline - performance.now());
+    reads = await readTurnLiveness(turnLiveness, lockCache, remaining);
+    const finishedAt = performance.now();
+    const elapsed = () => Date.now() - killedAt;
+    if (turnGone(dispatcherExited, reads, !keepChild)) {
+      if (finishedAt <= deadline) break;
+      throw new Error(
+        `${describeTurn(turnLiveness, reads, dispatcherExited, elapsed())}; the wait passed after its ${DEAD_TURN_WAIT_MS} ms bound`,
+      );
+    }
+    if (finishedAt >= deadline) {
+      throw new Error(
+        `${describeTurn(turnLiveness, reads, dispatcherExited, elapsed())}; the killed turn still reads as live`,
+      );
+    }
+    await delay(Math.min(DEAD_TURN_POLL_MS, Math.max(0, deadline - performance.now())));
+  }
+  return {
+    repo,
+    turnDir: turn.dir,
+    tmpRoot,
+    childPid: turn.pid,
+    killedAt,
+    diagnose: () => describeTurn(turnLiveness, reads, dispatcherExited, Date.now() - killedAt),
+  };
 }
 
 // The recovery call inherits the temporary directory that held the turn directory, as a call of the
@@ -379,12 +482,10 @@ async function keptTurnDir() {
 // Process: this is the one real crash that proves a killed dispatch leaves its turn directory and
 // state record for the next call. Every other case writes that state in process.
 test("the call that marks a killed dispatch interrupted removes its turn directory", async () => {
-  const { repo, turnDir, tmpRoot, killedAt } = await killedDispatch();
-  // A failure reports the turn directory state and the time from the kill to the check, which the
-  // case log alone does not hold (issue #2038).
-  const check = () =>
-    `the turn directory is ${existsSync(turnDir) ? "present" : "absent"} ${Date.now() - killedAt} ms after the kill`;
-  // Every failure past the kill carries the check, including a failed state-file read.
+  const { repo, turnDir, tmpRoot, diagnose } = await killedDispatch();
+  // Every failure past the kill reports the pids, the liveness reads, and the time from the kill
+  // to the check (issue #2042).
+  const check = () => diagnose();
   const withCheck = (error) => {
     const detail = check();
     const message = error instanceof Error ? error.message : String(error);
@@ -397,11 +498,22 @@ test("the call that marks a killed dispatch interrupted removes its turn directo
   try {
     expect(existsSync(turnDir), check()).toBe(true);
 
-    const next = await nextCall(repo, tmpRoot);
+    // The recovery call and the state read share one bound, so no await past the kill is unbounded.
+    const afterKill = (async () => ({
+      next: await nextCall(repo, tmpRoot),
+      state: await readRepoState(repo),
+    }))();
+    afterKill.catch(() => {});
+    const { next, state } = await within(
+      afterKill,
+      POST_KILL_BOUND_MS,
+      "the recovery call and state read",
+    ).catch((error) => {
+      throw withCheck(error);
+    });
 
     expect(next.exitCode, check()).toBe(1);
     expect(next.payload.error, check()).toContain("interrupted");
-    const state = await readRepoState(repo);
     expect(state.lifecycle, check()).toBe("interrupted");
     expect(existsSync(turnDir), check()).toBe(false);
     expect(readdirSync(tmpRoot), check()).toEqual([]);
@@ -409,6 +521,77 @@ test("the call that marks a killed dispatch interrupted removes its turn directo
     throw withCheck(error);
   }
 }, 60_000);
+
+// Usefulness: verifies issue #2042, that a dispatcher pid which the OS reused does not hold the
+// dead-turn wait when the state lock reads free. Not redundant: no other case drives the wait with
+// a recorded lock owner that is live but is another process.
+// In-process: the lock names this process with another start time, so `lockHeld` reads it as free
+// while `processExists` reads the pid as live; no process is started.
+test("a reused dispatcher pid does not hold the dead-turn wait", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dead-turn-wait-"));
+  scratches.push(dir);
+  const lockFile = join(dir, "state.lock");
+  await writeFile(
+    lockFile,
+    JSON.stringify({
+      pid: process.pid,
+      startedAt: "old",
+      startTime: "darwin-lstart:1000",
+      nonce: "n",
+    }),
+    "utf8",
+  );
+  const cache = startTimeCache({ probe: async () => "darwin-lstart:9000" });
+
+  const reads = await readTurnLiveness(
+    {
+      lockFile,
+      lockPid: process.pid,
+      child: { pid: await deadPid() },
+      fake: { pid: await deadPid() },
+    },
+    cache,
+    DEAD_TURN_WAIT_MS,
+  );
+
+  expect(processExists(process.pid)).toBe(true);
+  expect(turnGone(true, reads)).toBe(true);
+});
+
+// Usefulness: verifies issue #2042 blocker 3, that a liveness read which outlasts the wait reports
+// the read and its pid instead of a generic timeout. Not redundant: no other case drives a read
+// past its bound.
+// In-process: the cache probe never settles and the child pids are dead, so no process is started.
+test("a liveness read that outlasts the wait reports the read and its pid", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dead-turn-slow-"));
+  scratches.push(dir);
+  const lockFile = join(dir, "state.lock");
+  await writeFile(
+    lockFile,
+    JSON.stringify({
+      pid: process.pid,
+      startedAt: "old",
+      startTime: "darwin-lstart:1000",
+      nonce: "n",
+    }),
+    "utf8",
+  );
+  const cache = startTimeCache({ probe: () => new Promise(() => {}) });
+
+  const reads = await readTurnLiveness(
+    {
+      lockFile,
+      lockPid: process.pid,
+      child: { pid: await deadPid() },
+      fake: { pid: await deadPid() },
+    },
+    cache,
+    50,
+  );
+
+  expect(reads.lock.error).toContain(`the state lock read for pid ${process.pid}`);
+  expect(turnGone(true, reads)).toBe(false);
+});
 
 // Usefulness: verifies issue #1207 acceptance 2, that a recorded directory which is already gone
 // does not fail the call and the run is still marked `interrupted`.
