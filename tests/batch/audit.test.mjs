@@ -66,21 +66,42 @@ function failureMessage(summary, stderr) {
 }
 
 /**
- * Runs one audit with its stderr captured in the returned `stderr`, so a failed exit-code
- * assertion prints the audit error output. The lines still reach the process stderr stream.
+ * Runs one audit with its stderr and console error and warn output captured in the returned
+ * `stderr`, in write order, so a failed exit-code assertion prints the audit error output. Each
+ * line still reaches its original writer.
  */
 async function runAuditCaptured(options) {
   const written = [];
-  const write = process.stderr.write;
-  const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk, ...rest) => {
-    written.push(String(chunk));
-    return write.call(process.stderr, chunk, ...rest);
-  });
+  const record = (text) => written.push(String(text));
+  const stderr = process.stderr;
+  const originalWrite = stderr.write;
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  let forwarding = false;
+  const forward =
+    (original) =>
+    (...args) => {
+      record(`${args.map(String).join(" ")}\n`);
+      forwarding = true;
+      try {
+        return original.apply(console, args);
+      } finally {
+        forwarding = false;
+      }
+    };
   try {
+    stderr.write = (chunk, ...rest) => {
+      if (!forwarding) record(chunk);
+      return originalWrite.call(stderr, chunk, ...rest);
+    };
+    console.error = forward(originalError);
+    console.warn = forward(originalWarn);
     const result = await runAudit(options);
     return { ...result, stderr: written.join("") };
   } finally {
-    spy.mockRestore();
+    stderr.write = originalWrite;
+    console.error = originalError;
+    console.warn = originalWarn;
   }
 }
 
