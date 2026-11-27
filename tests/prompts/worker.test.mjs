@@ -538,14 +538,18 @@ test("first worker turn bars linking another checkout node_modules into the work
 
 // Usefulness: verifies requirement "a worker probe copy never links a work tree directory into it"
 // (issue #2028): a recursive delete of such a copy can follow the junction and remove the run work
-// tree's `node_modules`. The issue records that the worker reported the copies and `node_modules`
-// intact, so the rule also states the link-safe removal of a copy that holds a link.
-test("first worker turn bars a probe copy from linking and states the link-safe removal", () => {
+// tree's `node_modules`. Issue #2028 records that the worker removed the copies and reported that
+// `node_modules` stayed intact, so the rule also states the link-safe removal for a copy that holds
+// a link.
+test("first worker turn keeps the probe-copy install ban, bars the link, and states the link-safe removal", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "When a probe of old source needs a copy of the repository, run the probe inside the work tree instead, or use a copy under the turn temporary directory, for example a `git worktree add` checkout, without a link or junction to a work tree directory. Never link or junction a work tree directory into the copy. When a copy holds a link or junction, remove it without a recursive delete that follows links: `rmdir /s /q` on Windows or `rm -rf` on POSIX.",
+    "run the probe inside the work tree or keep the copy unlinked: never link or junction a work tree directory into the copy. Run no dependency install, repair, or update there.",
   );
-  expect(prompt).not.toContain("install the copy's own dependencies");
+  expect(prompt).not.toContain("link the `node_modules` of the work tree into the copy");
+  expect(prompt).toContain(
+    'When a copy holds a link or junction, remove it without a recursive delete that follows links: `cmd.exe /c rmdir /s /q "<work tree with backslashes>"` in cmd.exe or PowerShell, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<work tree>")"` in Git Bash, or `rm -rf "<work tree>"` on POSIX.',
+  );
   expect(prompt).toContain(
     "A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`. Every work tree that links the store sees that write.",
   );
