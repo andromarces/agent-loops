@@ -66,8 +66,9 @@ covers a different question: which pull requests need combined validation.
    excludes its issue by number, whatever repository it names. That over-exclusion of a foreign
    same-number reference is the existing safe behavior and stays out of scope here. One
    `gh pr view` read names the references,
-   body, and base, and the paginated commit read names the commit messages. The repository identity
-   is read once per command and shared by every delivery check. The success checkpoint records the
+   body, and base, and the paginated commit read names the commit messages. One successful repository
+   identity read per command is shared by every delivery check. A failed read is not kept, so the
+   next succeeded loop reads it again. The success checkpoint records the
    fact in the same write as its status and report, so the marker never depends on a later read.
 7. A failed call, a reply without a closing reference list, a closing reference whose repository
    identity is missing, and a commit list that reaches the API's 250-commit page without naming
