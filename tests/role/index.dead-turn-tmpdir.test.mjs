@@ -243,7 +243,7 @@ function describeTurn({ turnDir, lockPid, child, fake }, reads, dispatcherExited
           : "gone";
   return (
     `the turn directory is ${existsSync(turnDir) ? "present" : "absent"} ${Math.round(elapsedMs)} ms after the kill; ` +
-    `state lock owner pid ${lockPid ?? "none"} ${status(reads?.lock)}; ` +
+    `at the wait, state lock owner pid ${lockPid ?? "none"} ${status(reads?.lock)}; ` +
     `child pid ${child.pid} ${status(reads?.child)}; ` +
     `fake codex pid ${fake.pid} ${status(reads?.fake)}; ` +
     `dispatcher ${dispatcherExited ? "exited" : "not exited"}`
