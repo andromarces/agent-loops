@@ -69,6 +69,7 @@ no field compares two loop pull requests.
 ## Links
 
 - [Issue #2044: Report batch pull requests that change the same files](https://github.com/andromarces/agent-loops/issues/2044)
+- [PR #2045: Report batch pull requests that change the same files](https://github.com/andromarces/agent-loops/pull/2045)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0115: Report each loop's final report in the batch summary](0115-batch-loop-final-report.md)
 - Implementation: changed-file groups in `src/batch/overlap.mjs`
