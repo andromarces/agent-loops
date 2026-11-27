@@ -235,7 +235,9 @@ test("the closing-block rule states the one-blank-line list fold", () => {
     /The lead follows the prose-lead rules, the whole-line bold heading included/,
   );
   expect(reportBlock).toMatch(/Two blank lines, or no blank line before it, start no new section/);
-  expect(reportBlock).toMatch(/ordered list under that plain prose line stays unparseable/);
+  expect(reportBlock).toMatch(
+    /ordered list under a plain prose line below a `Label:` line stays unparseable/,
+  );
   expect(reportBlock).toMatch(
     /two blank lines under a label before a list make the block unparseable/,
   );
@@ -293,7 +295,7 @@ test("the closing-block rule names a bold-lead paragraph with its own dash list"
   expect(parseReportBlock(response)).toBeNull();
   expect(reportBlock).toMatch(/paragraph holds a bold lead and more prose on the same line/);
   expect(reportBlock).toMatch(
-    /own dash list between two labels[^.]*unparseable[^.]*put the paragraph and its list under one label/,
+    /Under a `Label:` line, its own dash list between two labels makes the block unparseable: put the paragraph and its list under one label/,
   );
 });
 
@@ -304,7 +306,7 @@ test("the closing-block rule names a bold-lead paragraph with its own dash list"
 test("the closing-block rule puts quoted or multi-paragraph text before the block", () => {
   expect(reportBlock).toMatch(/quoted or multi-paragraph text before the closing block/);
   expect(reportBlock).toMatch(/refer to it from one label/);
-  expect(reportBlock).toMatch(/quoted paragraph alone is dropped from the block/);
+  expect(reportBlock).toMatch(/Under a `Label:` line, a quoted paragraph alone supplies no value/);
   expect(reportBlock).toMatch(
     /dash list directly under a quoted prose line makes the block unparseable/,
   );
