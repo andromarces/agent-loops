@@ -62,6 +62,7 @@ its test, and in `adr/README.md`. The overlap was found only by reading the file
 ## Links
 
 - [Issue #2048: Include undeclared pull requests in the batch overlap report](https://github.com/andromarces/agent-loops/issues/2048)
+- [PR #2050: Read the undeclared pull request in the batch overlap report](https://github.com/andromarces/agent-loops/pull/2050)
 - [ADR 0176: Report batch pull requests that change the same files](0176-report-batch-pull-requests-that-change-the-same-files.md)
 - [ADR 0131: Name the undeclared pull request of a batch loop](0131-name-the-undeclared-pull-request-of-a-batch-loop.md)
 - [Implementation: changed-file groups](../src/batch/overlap.mjs)
