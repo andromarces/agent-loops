@@ -135,4 +135,5 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0175 — [Treat the OpenCode pty daemon folder as an expected literal temporary directory entry](0175-treat-the-opencode-pty-daemon-folder-as-an-expected-literal-temporary-directory-entry.md) — accepted
 - 0176 — [Report batch pull requests that change the same files](0176-report-batch-pull-requests-that-change-the-same-files.md) — partially-superseded — Partially superseded by [ADR 0177](0177-read-the-undeclared-pull-request-in-the-batch-overlap-report.md).
 - 0177 — [Read the undeclared pull request in the batch overlap report](0177-read-the-undeclared-pull-request-in-the-batch-overlap-report.md) — accepted
-- 0178 — [Mark a succeeded loop that does not deliver its item](0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md) — accepted
+- 0178 — [Mark a succeeded loop that does not deliver its item](0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md) — partially-superseded — Partially superseded by [ADR 0179](0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md).
+- 0179 — [Admit an issue whose only open closing reference names another repository](0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md) — accepted
