@@ -245,6 +245,102 @@ test("an exit 0 loop records the pull request its runtime declared", async () =>
   }
 });
 
+// Usefulness: after a batch ends, the summary and batch status name both pull requests of two
+// succeeded loops and the file they both change.
+test("a batch reports the pull requests that change a common file", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({
+        files: new Map([
+          [11, ["src/handler.mjs", "README.md"]],
+          [12, ["src/handler.mjs"]],
+        ]),
+      }),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(0);
+    expect(summary.overlapGroups).toEqual([{ pulls: [11, 12], paths: ["src/handler.mjs"] }]);
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.overlapGroups).toEqual([{ pulls: [11, 12], paths: ["src/handler.mjs"] }]);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a batch whose pull requests share no file reports no group in the summary or in
+// batch status, so an absent overlap never reads as one.
+test("a batch with no common file reports no group", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({
+        files: new Map([
+          [11, ["README.md"]],
+          [12, ["src/handler.mjs"]],
+        ]),
+      }),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(0);
+    expect(summary.overlapGroups).toEqual([]);
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.overlapGroups).toEqual([]);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a failed file-list read logs a warning and leaves the batch completed, so an
+// unreadable pull request never fails the work of the other loops.
+test("a failed file-list read logs a warning and does not fail the batch", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({
+        files: new Map([
+          [11, ["src/handler.mjs"]],
+          [12, ["src/handler.mjs"]],
+        ]),
+        unreadableFiles: new Set([12]),
+      }),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(0);
+    expect(summary.status).toBe("completed");
+    expect(summary.overlapGroups).toEqual([]);
+    const lines = errorSpy.mock.calls.map((call) => String(call[0]));
+    expect(lines.some((line) => line.includes("warn") && line.includes("12"))).toBe(true);
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.completion).toEqual({ status: "completed", complete: true });
+  } finally {
+    errorSpy.mockRestore();
+    await cleanupRepo();
+  }
+});
+
 // Usefulness: a failed loop reports the runtime pull request in the summary and in batch status.
 test("a failed loop records the pull request its runtime declared", async () => {
   const prepared = await waitPrepared([1]);

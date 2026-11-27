@@ -22,6 +22,7 @@ import { createOwnerDecisions, readAnswer, readDecision } from "./decisions.mjs"
 import { preflightItemEligibility } from "./eligibility.mjs";
 import { loopSegment, preparedItems } from "./items.mjs";
 import { loopEntry, progress, queuedLoop } from "./loop-records.mjs";
+import { overlapGroupsOf } from "./overlap.mjs";
 import { notify as defaultNotify } from "./notifier.mjs";
 import {
   createLoopWorkTree,
@@ -116,6 +117,7 @@ function summaryOf(manifest, loops, skipped = new Map()) {
   return {
     batchId: manifest.id,
     status: manifest.status,
+    overlapGroups: manifest.overlapGroups ?? [],
     loops: keys.map((key) => loopEntry(loops.get(key) ?? skipped.get(key))),
   };
 }
@@ -378,6 +380,20 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
           ...value,
           completionNotified: true,
         }))
+      ).manifest;
+    }
+    // A completed or failed batch reports the pull requests of its succeeded loops that change a
+    // common file (adr/0176-report-batch-pull-requests-that-change-the-same-files.md). A failed
+    // file-list read logs a warning and never fails the batch. A resume of a batch that had
+    // already ended keeps the stored groups.
+    if (complete && !terminalAtStart) {
+      const overlapGroups = await overlapGroupsOf({
+        loops: [...loops.values()],
+        gh,
+        repo: manifest.repo,
+      });
+      manifest = (
+        await updateManifestReturning(runsRoot, id, (value) => ({ ...value, overlapGroups }))
       ).manifest;
     }
     // A batch that was already completed or failed when a resume started is a no-op: its removal

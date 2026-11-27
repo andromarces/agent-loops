@@ -23,7 +23,13 @@ export const SUMMARY = {
   notes: "a note",
 };
 
-export function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
+export function fakeGh({
+  blocked = [],
+  closed = new Set(),
+  pulls = [],
+  files = new Map(),
+  unreadableFiles = new Set(),
+} = {}) {
   return async (args) => {
     if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
       return {
@@ -75,6 +81,18 @@ export function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
     }
     if (args[0] === "pr" && args[1] === "list") {
       return { status: 0, stdout: JSON.stringify([]), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("files")) {
+      const number = Number(args[2]);
+      if (unreadableFiles.has(number)) {
+        return { status: 1, stdout: "", stderr: `no file list for pull request ${number}` };
+      }
+      const list = files.get(number) ?? [];
+      return {
+        status: 0,
+        stdout: JSON.stringify({ files: list.map((path) => ({ path })) }),
+        stderr: "",
+      };
     }
     if (args[0] === "repo" && args[1] === "view") {
       return {
