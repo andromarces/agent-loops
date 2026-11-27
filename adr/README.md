@@ -132,3 +132,4 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0172 — [Remove the empty batch work-tree root when a batch ends](0172-remove-the-empty-batch-work-tree-root.md) — accepted
 - 0173 — [Forbid a probe copy from linking a work tree directory](0173-forbid-a-probe-copy-from-linking-a-work-tree-directory.md) — partially-superseded — Partially superseded by [ADR 0174](0174-forbid-a-reviewer-probe-copy-from-linking-into-the-work-tree.md).
 - 0174 — [Forbid a reviewer probe copy from linking into the work tree](0174-forbid-a-reviewer-probe-copy-from-linking-into-the-work-tree.md) — accepted
+- 0175 — [Treat the OpenCode pty daemon folder as an expected literal temporary directory entry](0175-treat-the-opencode-pty-daemon-folder-as-an-expected-literal-temporary-directory-entry.md) — accepted

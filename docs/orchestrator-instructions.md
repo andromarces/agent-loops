@@ -310,7 +310,10 @@ Apply these parent rules:
   The runtime cannot attribute an entry to the turn, and it does not delete one. The runtime reads
   them once after the turn, with no re-read and no wait. The field creates no `open` item by
   itself, and it never refuses a finish. An unattributed name with the `literal-tmp/` prefix goes
-  under `notes` in the finish summary, by name, and never under `open`. Every other unattributed
+  under `notes` in the finish summary, by name, and never under `open`. The one exception is a
+  `literal-tmp/opencode-pty-<uid>` name on a turn whose CLI is OpenCode: the runtime folder of the
+  OpenCode pty daemon is an expected tool entry, so it adds no `notes` item and no `open` item.
+  Any other unattributed name with that prefix still goes under `notes`. Every other unattributed
   entry, a `registered/` name and a foreign file such as an SQLite `-shm` or `-wal` sidecar
   included, goes nowhere in the finish summary: it adds no `open` item and no `notes` item. `open`
   stays `none` when nothing else is open.
