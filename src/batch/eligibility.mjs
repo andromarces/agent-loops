@@ -373,44 +373,43 @@ function referenceRepository(reference) {
   return null;
 }
 
-// A GitHub owner login holds letters, digits, and single hyphens, and never starts or ends with a
-// hyphen. A repository name holds letters, digits, dots, hyphens, and underscores. A value outside
-// these shapes is no readable identity, so a malformed one is never trimmed or normalized into a
-// match.
-const OWNER_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
-const REPOSITORY_NAME = /^[A-Za-z0-9._-]{1,100}$/;
-
-/** The lower-cased owner and name of a well-formed `owner/name` value, or null when it is not one. */
+/**
+ * The owner and name parts of an `owner/name` value, split at its single slash, or null when the
+ * value holds anything else. No part is trimmed or normalized here.
+ */
 function repositoryParts(value) {
   if (typeof value !== "string") return null;
   const parts = value.split("/");
-  if (parts.length !== 2) return null;
-  const [owner, name] = parts;
-  if (!OWNER_NAME.test(owner)) return null;
-  if (!REPOSITORY_NAME.test(name) || name === "." || name === "..") return null;
-  return [owner.toLowerCase(), name.toLowerCase()];
+  return parts.length === 2 ? parts : null;
 }
 
 /**
- * Whether one closing reference names an issue of `repository`: true when its readable repository
- * is that repository, false when it names another repository, and null when its repository
- * identity is missing or unreadable.
+ * Whether one closing reference names `repository`: true when its readable identity equals it
+ * without case, false when its identity names anything else, and null when the entry holds no
+ * repository identity. The comparison trims and normalizes nothing, so a malformed value never
+ * matches.
  */
 function referenceClosesIssue(reference, repository) {
-  const named = repositoryParts(referenceRepository(reference));
+  const identity = referenceRepository(reference);
+  if (identity === null) return null;
+  const named = repositoryParts(identity);
   const target = repositoryParts(repository.nameWithOwner);
-  if (named === null || target === null) return null;
-  return named[0] === target[0] && named[1] === target[1];
+  if (named === null || target === null) return false;
+  return (
+    named[0].toLowerCase() === target[0].toLowerCase() &&
+    named[1].toLowerCase() === target[1].toLowerCase()
+  );
 }
 
 /**
  * The issue numbers that one pull request closes in `repository`, from its closing references, its
- * body keywords when its base is not the default branch, and its commit messages. A closing
- * reference counts only when its repository is `repository`, compared without case. `unreadable`
- * holds the reference numbers whose repository identity is missing or unreadable, so each caller
- * can fail closed. `incomplete` is true when the commit read reached the API's 250-commit page, so
- * an absent issue is not proven absent.
- * @returns {Promise<{ closed: Set<number>, unreadable: Set<number>, incomplete: boolean }>}
+ * body keywords when its base is not the default branch, and its commit messages. `referenced`
+ * holds every reference number, whatever repository it names, which is the eligibility rule.
+ * `closed` holds the references whose repository is `repository` without case, plus the body and
+ * commit numbers. `unreadable` holds the reference numbers whose repository identity is missing,
+ * so the delivery check can fail closed. `incomplete` is true when the commit read reached the
+ * API's 250-commit page, so an absent issue is not proven absent.
+ * @returns {Promise<{ referenced: Set<number>, closed: Set<number>, unreadable: Set<number>, incomplete: boolean }>}
  */
 export async function readPullRequestClosures({
   gh,
@@ -421,10 +420,12 @@ export async function readPullRequestClosures({
   baseRefName,
   repository,
 }) {
+  const referenced = new Set();
   const closed = new Set();
   const unreadable = new Set();
   for (const reference of references ?? []) {
     if (!Number.isInteger(reference?.number)) continue;
+    referenced.add(reference.number);
     const matches = referenceClosesIssue(reference, repository);
     if (matches === true) closed.add(reference.number);
     else if (matches === null) unreadable.add(reference.number);
@@ -456,13 +457,13 @@ export async function readPullRequestClosures({
     }
     if (commits.length < 100) break;
   }
-  return { closed, unreadable, incomplete: count >= 250 };
+  return { referenced, closed, unreadable, incomplete: count >= 250 };
 }
 
 /**
  * The issue numbers that one pull request closes, from its own closing references, body, base
  * branch, and commit messages. A reply without a closing reference list is unreadable and throws.
- * @returns {Promise<{ closed: Set<number>, unreadable: Set<number>, incomplete: boolean }>}
+ * @returns {Promise<{ referenced: Set<number>, closed: Set<number>, unreadable: Set<number>, incomplete: boolean }>}
  */
 export async function readPullRequestClosingNumbers({ gh, repo, number, repository }) {
   const view = await readGhJson(
@@ -551,9 +552,9 @@ export async function readOpenPrClosures({ gh, repo, repository = null }) {
       baseRefName: entry.baseRefName,
       repository: cached,
     });
-    // An unreadable repository identity keeps the issue excluded, as main does: only a readable
-    // reference to another repository is no closure.
-    for (const issueNumber of [...closures.closed, ...closures.unreadable]) {
+    // Eligibility keeps main's rule: a closing reference excludes its issue by number, whatever
+    // repository it names. Only the delivery check compares repository identities.
+    for (const issueNumber of [...closures.referenced, ...closures.closed]) {
       closed.add(issueNumber);
       addSource(issueNumber, entry);
     }

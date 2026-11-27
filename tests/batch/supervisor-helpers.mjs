@@ -38,6 +38,7 @@ export function fakeGh({
   unreadableClosures = new Set(),
   malformedClosures = new Set(),
   closingCalls = [],
+  repositoryIdentity = { nameWithOwner: "o/r", defaultBranch: "main" },
 } = {}) {
   return async (args) => {
     if (
@@ -195,9 +196,9 @@ export function fakeGh({
       return {
         status: 0,
         stdout: JSON.stringify({
-          nameWithOwner: "o/r",
-          url: "https://github.com/o/r",
-          defaultBranchRef: { name: "main" },
+          nameWithOwner: repositoryIdentity.nameWithOwner,
+          url: `https://github.com/${repositoryIdentity.nameWithOwner}`,
+          defaultBranchRef: { name: repositoryIdentity.defaultBranch },
         }),
         stderr: "",
       };

@@ -60,19 +60,21 @@ covers a different question: which pull requests need combined validation.
    `src/batch/eligibility.mjs`: the pull request's closing references, its body keywords when its
    base is not the default branch, and its commit messages. A closing reference counts only when
    its repository is the batch repository, compared by owner and name without case, so another
-   repository's `#42` never closes local issue 42. Only a well-formed GitHub owner and name is a
-   readable identity, and a malformed one is never trimmed or normalized into a match. One
+   repository's `#42` never closes local issue 42. An identity that is malformed, such as one
+   with trailing whitespace or an extra slash, is compared as written and never trimmed or
+   normalized into a match. The eligibility check keeps its existing rule: a closing reference
+   excludes its issue by number, whatever repository it names. That over-exclusion of a foreign
+   same-number reference is the existing safe behavior and stays out of scope here. One
    `gh pr view` read names the references,
    body, and base, and the paginated commit read names the commit messages. The repository identity
    is read once per command and shared by every delivery check. The success checkpoint records the
    fact in the same write as its status and report, so the marker never depends on a later read.
 7. A failed call, a reply without a closing reference list, a closing reference whose repository
-   identity is missing, malformed, or unreadable, and a commit list that reaches the API's
-   250-commit page without naming the issue are all unreadable evidence. Each logs one warning and records
-   `null`, which reads as `closing-reference-unread`. An unreadable read never reads as delivered,
-   never fails the batch, and never changes an exit code. The eligibility check keeps excluding an
-   issue whose closing reference names no readable repository, as it did before this ADR: only a
-   readable reference to another repository stops counting as a closure.
+   identity is missing, and a commit list that reaches the API's 250-commit page without naming
+   the issue are all unreadable evidence. Each logs one warning and records `null`, which reads as
+   `closing-reference-unread`. An unreadable read never reads as delivered, never fails the batch,
+   and never changes an exit code. A foreign or malformed identity is not unreadable: it is simply
+   not closing evidence, so the loop reads as `pull-request-does-not-close-issue`.
 8. `batch status` reports `completion.complete: false` while any loop entry is partial. The
    completion block keeps the stored batch status, so a partial delivery never reads as fully
    delivered and the batch status itself stays as it was. This replaces the `complete` rule of
@@ -86,8 +88,11 @@ covers a different question: which pull requests need combined validation.
   each loop's report.
 - An issue loop that succeeds with no pull request is named as partial, because it holds no
   delivery evidence.
-- A closing reference to another repository, and a reference whose repository identity is
-  unreadable, are never read as a closure of the local issue.
+- A closing reference to another repository, or with a malformed identity, is not delivery
+  evidence for the local issue. A reference with a missing identity is unverified delivery.
+- The eligibility check still excludes an issue by any closing reference number, as before, so a
+  foreign same-number reference can still exclude an issue. That existing over-exclusion is out of
+  scope.
 - A loop whose finish summary reports work not done is named even when its pull request closes the
   issue, and a loop whose pull request does not close its issue is named even when its summary
   reports `notDone: none`.
@@ -119,6 +124,9 @@ covers a different question: which pull requests need combined validation.
 7. **Copy the closing-keyword rules into the batch delivery check.** Rejected in review. The
    eligibility helpers are the one implementation, so a body keyword or a commit message that the
    eligibility check recognizes is recognized here too.
+8. **Validate the owner and name shape.** Rejected in review. A character rule admits invalid
+   logins such as `bad--owner` and rejects valid managed-user logins such as `mona-cat_octo`.
+   The delivery check needs identity equality, not validity, so no validator is used.
 
 ## Links
 
