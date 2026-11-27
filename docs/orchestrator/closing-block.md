@@ -102,8 +102,7 @@ A `- ` item or sub-item that opens with a report label name, plain or bold, for 
 makes the block unparseable (issues #1006 and #2013). A prose line directly after a `Label:` line
 with no blank line leaves its list unfolded, so the block stays unparseable. Under that form, a
 second prose line before the list, and a list under prose after the reviewer `Verdict:` line, stay
-unparseable too, and so does a list that a later repeat of the label shadows. A lone heading takes
-the prose lines directly under it as its value, so a later section after one blank line still folds.
+unparseable too, and so does a list that a later repeat of the label shadows.
 
 Any other list in the closing block makes the block unparseable, so the list surfaces
 through `raw` instead of being dropped. Examples are bullets after the reviewer `Verdict:` line,
@@ -125,14 +124,15 @@ character or `*`, and where nothing glued from that character on is a letter
 or an ASCII digit, for example `*file*` or `*use a* b`. Such a line is
 dropped without `raw` under a `Label:` line, and every matching line there
 drops the same way, so the block still parses with the text gone; a matching
-line that keeps a list from folding, or that follows a section fold, makes the
-block unparseable instead. A lone heading takes a matching line in its value
-run as its value; in every other position the rules above apply.
+line that keeps a list from folding, that follows a bare dash section, or that
+follows a prose lead whose list sits after one blank line, makes the block
+unparseable instead. A lone heading takes a matching line in its value run as
+its value.
 
 A `*` line that is not the dropped shape above either is a list and blanks the block, for example
 `*item`, `* item`, or `*file*.mjs`, or is not a list and drops as prose under a `Label:` line, for
 example `**bold** note`, with the same refusals. A lone heading takes such a non-list line in its
-value run as its value, and the same refusals apply elsewhere.
+value run as its value.
 
 A table pair is a line with a `|` and a delimiter row directly below it. A Markdown table in the block makes it unparseable: put tabular data in `- ` items, one row per item.
 
