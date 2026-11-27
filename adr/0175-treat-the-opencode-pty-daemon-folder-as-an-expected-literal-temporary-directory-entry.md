@@ -45,6 +45,7 @@ Andro Marces
 ## Links
 
 - [Issue #2040: Classify the OpenCode pty folder in literal /tmp entries of worker turns](https://github.com/andromarces/agent-loops/issues/2040)
+- [PR #2041: Treat the OpenCode pty folder as an expected literal-tmp entry](https://github.com/andromarces/agent-loops/pull/2041)
 - [ADR 0108: Report a literal system temporary directory entry in the inherited temporary directory field](0108-report-a-literal-system-temporary-directory-entry-in-the-inherited-tmpdir-field.md)
 - [ADR 0095: Report inherited temporary directory names as diagnostics, not open items](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md)
 - [ADR 0162: Run every OpenCode call of a turn on a private server](0162-run-every-opencode-call-of-a-turn-on-a-private-server.md)
