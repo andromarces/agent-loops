@@ -728,3 +728,47 @@ test("a same-repository reference keeps the exclusion beside a foreign one", asy
   });
   expect([...closures.closed]).toEqual([9]);
 });
+
+// Usefulness: a failed batch repository identity read keeps an otherwise eligible issue unlaunched.
+test("a failed repository identity read rejects the closure read", async () => {
+  const list = closureGh([
+    {
+      number: 15,
+      headRefName: "a",
+      closingIssuesReferences: [{ number: 9, repository: { nameWithOwner: "other/repo" } }],
+      baseRefName: "main",
+      body: "",
+    },
+  ]);
+  const gh = (args) => {
+    if (args[0] === "repo" && args[1] === "view") {
+      return { status: 1, stdout: "", stderr: "gh: repository read failed" };
+    }
+    return list(args);
+  };
+  await expect(readOpenPrClosures({ gh, repo: "C:/repo" })).rejects.toThrow();
+});
+
+// Usefulness: a repository identity reply without nameWithOwner keeps an otherwise eligible issue unlaunched.
+test("a repository identity reply without nameWithOwner rejects the closure read", async () => {
+  const list = closureGh([
+    {
+      number: 15,
+      headRefName: "a",
+      closingIssuesReferences: [{ number: 9, repository: { nameWithOwner: "other/repo" } }],
+      baseRefName: "main",
+      body: "",
+    },
+  ]);
+  const gh = (args) => {
+    if (args[0] === "repo" && args[1] === "view") {
+      return {
+        status: 0,
+        stdout: JSON.stringify({ defaultBranchRef: { name: "main" } }),
+        stderr: "",
+      };
+    }
+    return list(args);
+  };
+  await expect(readOpenPrClosures({ gh, repo: "C:/repo" })).rejects.toThrow();
+});
