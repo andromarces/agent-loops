@@ -84,6 +84,7 @@ therefore still excludes a local issue that no pull request of this repository c
 ## Links
 
 - [Issue #2052: Admit an issue whose only open closing reference names another repository](https://github.com/andromarces/agent-loops/issues/2052)
+- [PR #2054: Admit an issue whose only open closing reference names another repository](https://github.com/andromarces/agent-loops/pull/2054)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0178: Mark a succeeded loop that does not deliver its item](0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md)
 - [Implementation: batch eligibility](../src/batch/eligibility.mjs)
