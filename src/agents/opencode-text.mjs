@@ -35,10 +35,11 @@ const ERROR_TEXT_LIMIT = 4000;
  * except that a part opening a report label line starts its own line, and a new message starts its
  * own line. That join is returned unchanged when its trimmed form gives a report. Otherwise a
  * part whose first line is a lone report heading starts its own line when the text so far ends in
- * a non-whitespace character and a later unfenced line opens a report label, plain or bold.
+ * a non-whitespace character and a later unfenced line of that part opens a report label, plain
+ * or bold.
  * The last message that holds a closing block attempt governs alone: earlier
- * attempt-holding messages drop, messages without an attempt stay. The split guard reads
- * origin/main's join, so its result never changes.
+ * attempt-holding messages drop, messages without an attempt stay. The split guard reads the
+ * plain join, so its result never changes.
  * The error text is redacted (ADR 0017) and bounded to its last 4000 code units. A later
  * redaction pass with a different environment can grow it past that bound.
  * @throws {Error} when two attempt-holding messages interleave in the stream, or when the
@@ -184,7 +185,7 @@ function labelLinePartCount(parts) {
   return touched.size;
 }
 
-// The join of origin/main, which the split guard reads, so its result never changes.
+// The plain join, which the split guard reads, so its result never changes.
 function mainJoinPart(text, part) {
   return LABEL_LINE.test(part) && !text.endsWith("\n") ? `${text}\n${part}` : `${text}${part}`;
 }
