@@ -271,7 +271,7 @@ test("the closing-block rule states the whole-line bold heading exception", () =
 // (issue #2035). No other test pins this summary.
 test("the closing-block rule scopes the star-line summary to its heading form", () => {
   expect(reportBlock).toMatch(
-    /Under a `Label:` line, a line that starts with `\*` either counts as a list or is dropped from the block, so write none/,
+    /Under a `Label:` line, a line that starts with `\*` counts as a list, is dropped from the block, or makes the block unparseable, so write none/,
   );
   expect(reportBlock).toMatch(
     /A lone heading keeps a non-list `\*` line in its value run as the value/,
