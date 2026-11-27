@@ -902,17 +902,22 @@ test("fixed reviewer text excludes the test slot rule paths and still catches a 
   expect(`${fixed} Run pnpm install.`).toMatch(TOOL_NAME);
 });
 
-// Usefulness: verifies acceptance #1026 — the instructions say how a probe of old source avoids an
-// install: the probe copy links the work tree's `node_modules`, and an unreachable one is reported
-// as unresolved instead of letting a tool install into the copy.
-test("reviewer prompt tells a probe copy to link the work tree dependencies and names no tool", () => {
+// Usefulness: verifies acceptance #2034 — the reviewer probe-copy rule keeps the plain copy method
+// of main, because `git worktree add` writes to the shared worktree registry and the reviewer turn
+// forbids a change of shared Git state. A link or junction into a copy is a risk: a recursive
+// delete can follow it and remove the work tree's dependencies, which issue #2028 reports as a
+// risk of that link.
+test("reviewer prompt bans the probe-copy link for every copy and states the link-safe removal", () => {
   const prompt = fixedReviewerText();
   expect(prompt).toContain(
-    "A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: link the dependency directory of the work tree into the copy, with a junction on Windows or a symlink elsewhere, before a tool runs there.",
+    "A probe copy of the repository, of the current commit or another commit, never links or junctions a directory of any work tree or checkout (the work tree, the primary checkout, or another work tree) into it.",
   );
   expect(prompt).toContain(
-    "When the copy cannot link it, report the probe as unresolved in Checks.",
+    'When a probe copy holds a link or junction, remove it without a recursive delete that follows links: `cmd.exe /c rmdir /s /q "<probe copy with backslashes>"` in cmd.exe or PowerShell, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<probe copy>")"` in Git Bash, or `rm -rf "<probe copy>"` on POSIX.',
   );
+  expect(prompt).not.toContain("git worktree add");
+  expect(prompt).not.toContain("git worktree remove");
+  expect(prompt).not.toContain("link the dependency directory of the work tree into the copy");
   // The prompt fits any repository (ADR 0038), so the rule names no tool or directory.
   expect(prompt).not.toMatch(TOOL_NAME);
 });

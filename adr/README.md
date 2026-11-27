@@ -130,4 +130,5 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0168 — [Fold a closing-block list item that opens with a plain label name](0168-fold-a-plain-label-list-item.md) — accepted
 - 0169 — [Name the outcome of a repair that does not recover a closing block](0169-name-the-outcome-of-a-repair-that-does-not-recover-a-block.md) — accepted
 - 0172 — [Remove the empty batch work-tree root when a batch ends](0172-remove-the-empty-batch-work-tree-root.md) — accepted
-- 0173 — [Forbid a probe copy from linking a work tree directory](0173-forbid-a-probe-copy-from-linking-a-work-tree-directory.md) — accepted
+- 0173 — [Forbid a probe copy from linking a work tree directory](0173-forbid-a-probe-copy-from-linking-a-work-tree-directory.md) — partially-superseded — Partially superseded by [ADR 0174](0174-forbid-a-reviewer-probe-copy-from-linking-into-the-work-tree.md).
+- 0174 — [Forbid a reviewer probe copy from linking into the work tree](0174-forbid-a-reviewer-probe-copy-from-linking-into-the-work-tree.md) — accepted

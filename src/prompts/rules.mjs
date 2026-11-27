@@ -319,34 +319,42 @@ export const tempRemovalRule = (place, example = "") =>
   `Before the closing block, remove every temporary file or directory that this turn created outside the ${place}. Name in Notes any entry that you cannot remove.${example}`;
 
 // Shared clauses of the probe-copy rule. Each clause appears once, and both variants interpolate it.
-const PROBE_JUNCTION = "with a junction on Windows or a symlink elsewhere";
 const PROBE_UNRESOLVED = "report the probe as unresolved in Checks.";
 const INSTALLED_BINARY = "call the installed binary directly";
 const NO_DEPENDENCY_INSTALL = "dependency install, repair, or update";
 const SHARED_PACKAGE_STORE = "the shared package store";
 
-// The dependency directory name is the only place-dependent word in the link sentence.
-const PROBE_DEPENDENCY = {
-  "work tree": "`node_modules`",
-  repository: "dependency directory",
-};
+const PROBE_IS_GIT_WORK_TREE =
+  "When a probe of another commit needs a copy, the copy is a Git work tree made with `git worktree add` under the turn temporary directory, not an archive extraction, and it never links or junctions a directory of any work tree or checkout (the run work tree, the primary checkout, or another work tree) into it.";
 
-const probeLink = (place) =>
-  `link the ${PROBE_DEPENDENCY[place]} of the work tree into the copy, ${PROBE_JUNCTION}`;
+// The install ban covers a copy of the same commit as well as a copy of another commit.
+const PROBE_INSTALL_BAN = `Run no ${NO_DEPENDENCY_INSTALL} in any probe copy.`;
+
+const PROBE_REMOVE_WORK_TREE =
+  'Remove the probe work tree with `git worktree remove --force "<probe copy>"` before any folder delete.';
+
+// The reviewer keeps the plain copy method of main: `git worktree add` writes to the shared
+// worktree registry, which the read-only turn does not change. The ban covers a copy of the current
+// commit as well as a copy of another commit.
+const PROBE_REVIEWER_NO_LINK =
+  "A probe copy of the repository, of the current commit or another commit, never links or junctions a directory of any work tree or checkout (the work tree, the primary checkout, or another work tree) into it.";
+
+const PROBE_LINK_SAFE_REMOVAL =
+  'When a probe copy holds a link or junction, remove it without a recursive delete that follows links: `cmd.exe /c rmdir /s /q "<probe copy with backslashes>"` in cmd.exe or PowerShell, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<probe copy>")"` in Git Bash, or `rm -rf "<probe copy>"` on POSIX.';
 
 const probeCopyText = {
   "work tree": () =>
-    `When a probe of another commit needs a copy, the copy is a Git work tree made with \`git worktree add\` under the turn temporary directory, not an archive extraction, and it never links or junctions a directory of any work tree or checkout (the run work tree, the primary checkout, or another work tree) into it. A probe copy with no dependencies of its own runs only commands that need none. Run no dependency install, repair, or update there. Remove the probe work tree with \`git worktree remove --force "<probe copy>"\` before any folder delete. When a probe copy holds a link or junction, remove it without a recursive delete that follows links: \`cmd.exe /c rmdir /s /q "<probe copy with backslashes>"\` in cmd.exe or PowerShell, \`MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<probe copy>")"\` in Git Bash, or \`rm -rf "<probe copy>"\` on POSIX.
+    `${PROBE_IS_GIT_WORK_TREE} A probe copy with no dependencies of its own runs only commands that need none. ${PROBE_INSTALL_BAN} ${PROBE_REMOVE_WORK_TREE} ${PROBE_LINK_SAFE_REMOVAL}
   - A tool such as \`vp\` installs into ${SHARED_PACKAGE_STORE} when it finds no usable \`node_modules\`. Every work tree that links the store sees that write. Before \`pnpm run\` or \`pnpm exec\` in a probe copy, set \`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn\` in the environment of that command, or ${INSTALLED_BINARY}. pnpm installs from its dependency check by default.`,
-  repository: (place) =>
-    `Run no ${NO_DEPENDENCY_INSTALL} in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to ${SHARED_PACKAGE_STORE} outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: ${probeLink(place)}, before a tool runs there. When the copy cannot link it, ${PROBE_UNRESOLVED} The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, ${INSTALLED_BINARY} instead of a package manager run or exec command, or ${PROBE_UNRESOLVED}`,
+  repository: () =>
+    `Run no ${NO_DEPENDENCY_INSTALL} in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to ${SHARED_PACKAGE_STORE} outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. ${PROBE_REVIEWER_NO_LINK} ${PROBE_LINK_SAFE_REMOVAL} The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, ${INSTALLED_BINARY} instead of a package manager run or exec command, or ${PROBE_UNRESOLVED}`,
 };
 
 /**
  * The probe-copy dependency rule of the worker and reviewer prompts. `place` selects the wording
  * that the prompt for that tree carries.
  */
-export const probeCopyRule = (place) => probeCopyText[place](place);
+export const probeCopyRule = (place) => probeCopyText[place]();
 
 /** What a pull request body describes. The worker and orchestrator prompts share it. */
 export const PR_BODY_SCOPE =
