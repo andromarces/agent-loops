@@ -57,7 +57,10 @@ function failureMessage(summary, stderr) {
     status: summary?.status ?? null,
     pauseReason: summary?.pauseReason ?? null,
     reason: summary?.reason ?? null,
-    reviewers: reviewers.map(({ status, error }) => ({ status, error })),
+    reviewers: reviewers.map((entry) => ({
+      status: entry?.status ?? null,
+      error: entry?.error ?? null,
+    })),
     stderr: typeof stderr === "string" ? stderr : "",
   });
 }
