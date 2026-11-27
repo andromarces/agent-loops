@@ -1,19 +1,53 @@
 // The changed-file overlap of a finished batch (adr/0176-report-batch-pull-requests-that-change-the-same-files.md).
 // It only reports the groups: the batch never merges, combines, or tests the pull requests.
+import { ghApi, pagedRead } from "../lib/checks/gh-api.mjs";
+import { isJsonObject } from "../lib/json.mjs";
 import { logWarn } from "../lib/log.mjs";
 import { mapInBatches } from "../lib/map-in-batches.mjs";
 import { readGhJson } from "./gh-read.mjs";
 
 const READ_BATCH_SIZE = 4;
+// The REST files list stops at 3000 files, so a list at the cap proves nothing.
+const PR_FILES_CAP = 3000;
+const SLUG_PATTERN = /^[^/\s]+\/[^/\s]+$/;
 
-/** The changed paths of one pull request, or null for a reply that names no file list of paths. */
-async function changedPathsOf(gh, repo, pr) {
-  const view = await readGhJson(gh, ["pr", "view", String(pr), "--json", "files"], repo);
-  if (!Array.isArray(view?.files)) return null;
+/** The `owner/name` of the repository, or null for a reply that names no readable value. */
+async function repoSlugOf(gh, repo) {
+  const view = await readGhJson(gh, ["repo", "view", "--json", "nameWithOwner"], repo);
+  const slug = isJsonObject(view) ? view.nameWithOwner : null;
+  return typeof slug === "string" && SLUG_PATTERN.test(slug) ? slug : null;
+}
+
+/**
+ * Every changed path of one pull request, read from the paginated REST file list and checked
+ * against the changed-file count. Throws a message that names the missing proof: a failed read, a
+ * list shorter or longer than the count, a list at the API cap, or an entry of another shape.
+ */
+async function completePathsOf(gh, repo, slug, pr) {
+  const view = await readGhJson(gh, ["pr", "view", String(pr), "--json", "changedFiles"], repo);
+  if (!isJsonObject(view) || !Number.isInteger(view.changedFiles) || view.changedFiles < 0) {
+    throw new Error("the changed-file count is unreadable");
+  }
+  const pages = await ghApi(pagedRead(gh, null), [`repos/${slug}/pulls/${pr}/files`], repo);
+  if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
+    throw new Error("the read named no page list");
+  }
+  const entries = pages.flat();
+  if (entries.length >= PR_FILES_CAP) {
+    throw new Error(`the list reaches the ${PR_FILES_CAP}-file API cap`);
+  }
+  if (entries.length !== view.changedFiles) {
+    throw new Error(
+      `the list holds ${entries.length} file(s) for ${view.changedFiles} changed file(s)`,
+    );
+  }
   const paths = [];
-  for (const file of view.files) {
-    if (typeof file?.path !== "string") return null;
-    paths.push(file.path);
+  for (const entry of entries) {
+    if (!isJsonObject(entry) || typeof entry.filename !== "string") {
+      throw new Error("the list holds an entry that names no path");
+    }
+    paths.push(entry.filename);
+    if (typeof entry.previous_filename === "string") paths.push(entry.previous_filename);
   }
   return paths;
 }
@@ -61,14 +95,15 @@ function groupEntries(entries) {
 }
 
 /**
- * Reads the changed-file lists of the pull requests of the succeeded loops and returns each group
- * that shares at least one path. `loops` holds loop records, and a loop without a succeeded status
- * or an integer pull request number is not read. A failed or malformed read logs one warning
- * through `warn` and leaves out only that pull request.
+ * Reads every changed-file list of the pull requests of the succeeded loops and returns the groups
+ * that share at least one path, beside the pull requests whose list that read cannot prove
+ * complete. `loops` holds loop records, and a loop without a succeeded status or an integer pull
+ * request number is not read. A failed or incomplete read logs one warning through `warn` and
+ * leaves out only that pull request.
  * @param {{ loops: Array<object>, gh: Function, repo: string, warn?: (message: string) => void }} options
- * @returns {Promise<Array<{ pulls: number[], paths: string[] }>>}
+ * @returns {Promise<{ groups: Array<{ pulls: number[], paths: string[] }>, incomplete: number[] }>}
  */
-export async function overlapGroupsOf({ loops, gh, repo, warn = logWarn }) {
+export async function overlapReportOf({ loops, gh, repo, warn = logWarn }) {
   const numbers = [
     ...new Set(
       loops
@@ -76,27 +111,33 @@ export async function overlapGroupsOf({ loops, gh, repo, warn = logWarn }) {
         .map((loop) => loop.pr),
     ),
   ].sort((a, b) => a - b);
-  // One pull request cannot overlap, and a failed read cannot make a group visible.
-  if (numbers.length < 2) return [];
-  const reads = await mapInBatches(numbers, READ_BATCH_SIZE, async (pr) => {
-    let paths;
-    try {
-      paths = await changedPathsOf(gh, repo, pr);
-    } catch (err) {
-      warn(`pull request ${pr}: the file list read failed: ${err?.message ?? err}`);
-      return null;
-    }
-    if (paths === null) {
-      warn(`pull request ${pr}: the file list read named no readable file list`);
-      return null;
-    }
-    return paths;
-  });
-  const entries = [];
-  for (let index = 0; index < numbers.length; index += 1) {
-    const paths = reads[index];
-    if (paths === null) continue;
-    entries.push({ pr: numbers[index], paths, set: new Set(paths) });
+  // One pull request cannot overlap, and no read is needed to report that.
+  if (numbers.length < 2) return { groups: [], incomplete: [] };
+  let slug;
+  try {
+    slug = await repoSlugOf(gh, repo);
+  } catch (err) {
+    warn(`the repository name read failed: ${err?.message ?? err}`);
+    return { groups: [], incomplete: numbers };
   }
-  return groupEntries(entries);
+  if (slug === null) {
+    warn("the repository name read named no readable owner and name");
+    return { groups: [], incomplete: numbers };
+  }
+  const reads = await mapInBatches(numbers, READ_BATCH_SIZE, async (pr) => {
+    try {
+      return { pr, paths: await completePathsOf(gh, repo, slug, pr) };
+    } catch (err) {
+      warn(`pull request ${pr}: the file list read is incomplete: ${err?.message ?? err}`);
+      return { pr, paths: null };
+    }
+  });
+  const report = { groups: [], incomplete: [] };
+  const entries = [];
+  for (const { pr, paths } of reads) {
+    if (paths === null) report.incomplete.push(pr);
+    else entries.push({ pr, paths, set: new Set(paths) });
+  }
+  report.groups = groupEntries(entries);
+  return report;
 }

@@ -8,6 +8,7 @@ import { git } from "../../src/batch/git.mjs";
 import { readLoop } from "../../src/batch/store.mjs";
 import { newBatchId } from "../../src/batch/supervisor.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
+import { pageStdout } from "../gh-doubles.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { pollUntil, within } from "../wait-helpers.mjs";
 
@@ -29,6 +30,7 @@ export function fakeGh({
   pulls = [],
   files = new Map(),
   unreadableFiles = new Set(),
+  mismatchedFiles = new Set(),
 } = {}) {
   return async (args) => {
     if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
@@ -82,15 +84,25 @@ export function fakeGh({
     if (args[0] === "pr" && args[1] === "list") {
       return { status: 0, stdout: JSON.stringify([]), stderr: "" };
     }
-    if (args[0] === "pr" && args[1] === "view" && args.includes("files")) {
+    if (args[0] === "pr" && args[1] === "view" && args.includes("changedFiles")) {
       const number = Number(args[2]);
       if (unreadableFiles.has(number)) {
         return { status: 1, stdout: "", stderr: `no file list for pull request ${number}` };
       }
-      const list = files.get(number) ?? [];
+      const count = (files.get(number) ?? []).length + (mismatchedFiles.has(number) ? 1 : 0);
+      return { status: 0, stdout: JSON.stringify({ changedFiles: count }), stderr: "" };
+    }
+    const filePage = /\/pulls\/(\d+)\/files\?per_page=100&page=(\d+)$/.exec(args[1] ?? "");
+    if (args[0] === "api" && filePage !== null && args[2] === "--include") {
+      const number = Number(filePage[1]);
+      if (unreadableFiles.has(number)) {
+        return { status: 1, stdout: "", stderr: `no file list for pull request ${number}` };
+      }
+      const start = (Number(filePage[2]) - 1) * 100;
+      const list = (files.get(number) ?? []).slice(start, start + 100);
       return {
         status: 0,
-        stdout: JSON.stringify({ files: list.map((path) => ({ path })) }),
+        stdout: pageStdout(list.map((filename) => ({ filename }))),
         stderr: "",
       };
     }
