@@ -202,7 +202,7 @@ test("worker turns repeat the bold-lead paragraph rule", () => {
     const prompt = workerPrompt("do the task", firstTurn).replace(/\s+/g, " ");
     expect(prompt).toContain("A paragraph holds a bold lead and more prose on the same line.");
     expect(prompt).toContain(
-      "With its own dash list between two labels it makes the block unparseable: put the paragraph and its list under one label.",
+      "Under a `Label:` line, its own dash list between two labels makes the block unparseable: put the paragraph and its list under one label.",
     );
   }
 });
