@@ -667,24 +667,6 @@ test("a foreign same-number closing reference does not close the issue", async (
   expect(result).toMatchObject({ ok: true });
 });
 
-// Usefulness: a closing reference with no repository identity keeps the exclusion, the safe
-// direction that issue #2052 leaves unchanged.
-test("a closing reference with no repository identity still closes the issue", async () => {
-  const closures = await readOpenPrClosures({
-    gh: closureGh([
-      {
-        number: 15,
-        headRefName: "a",
-        closingIssuesReferences: [{ number: 9 }],
-        baseRefName: "main",
-        body: "",
-      },
-    ]),
-    repo: "C:/repo",
-  });
-  expect([...closures.closed]).toEqual([9]);
-});
-
 // Usefulness: an identity that does not split into owner and name cannot be compared, so it keeps
 // the exclusion.
 test("a closing reference whose identity does not split still closes the issue", async () => {

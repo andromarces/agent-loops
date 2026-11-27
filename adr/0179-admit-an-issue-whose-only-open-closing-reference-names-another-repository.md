@@ -8,9 +8,9 @@ accepted
 
 This ADR partially supersedes
 [ADR 0178: Mark a succeeded loop that does not deliver its item](0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md).
-The replaced part is decision 6's clause that the eligibility check keeps excluding an issue by a
-closing reference's number whatever repository it names. Every other decision, consequence, and
-alternative stays in force.
+The replaced parts are decision 6's clause that the eligibility check keeps excluding an issue by a
+closing reference's number whatever repository it names, and the consequence that restates that
+over-exclusion. Every other decision, consequence, and alternative stays in force.
 
 ## Date
 

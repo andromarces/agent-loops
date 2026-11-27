@@ -4,18 +4,20 @@
 
 partially-superseded
 
-The superseded part is decision 6's clause that the eligibility check excludes an issue by a
-closing reference's number whatever repository it names
+The superseded parts are decision 6's clause that the eligibility check excludes an issue by a
+closing reference's number whatever repository it names, and the consequence that restates that
+over-exclusion
 ([ADR 0179](0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md)).
 Every other decision, consequence, and alternative stays in force.
 
 ## Superseded by
 
 [adr/0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md](0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md)
-partially supersedes this ADR. The replaced part is decision 6's clause that the eligibility check
-keeps excluding an issue by a closing reference's number whatever repository it names. The
-eligibility check now admits the issue when the only such reference names another repository. Every
-other decision, consequence, and alternative stays in force.
+partially supersedes this ADR. The replaced parts are decision 6's clause that the eligibility check
+keeps excluding an issue by a closing reference's number whatever repository it names, and the
+consequence that restates that over-exclusion. The eligibility check now admits the issue when the
+only such reference names another repository. Every other decision, consequence, and alternative
+stays in force.
 
 ## Date
 
@@ -77,8 +79,10 @@ covers a different question: which pull requests need combined validation.
    with trailing whitespace or an extra slash, is compared as written and never trimmed or
    normalized into a match. The eligibility check keeps its existing rule: a closing reference
    excludes its issue by number, whatever repository it names. That over-exclusion of a foreign
-   same-number reference is the existing safe behavior and stays out of scope here. One
-   `gh pr view` read names the references,
+   same-number reference is the existing safe behavior and stays out of scope here. Superseded by
+   [ADR 0179](0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md):
+   the eligibility check now admits the issue when the only such reference names another
+   repository. One `gh pr view` read names the references,
    body, and base, and the paginated commit read names the commit messages. One successful repository
    identity read per command is shared by every delivery check. A failed read is not kept, so the
    next succeeded loop reads it again. The success checkpoint records the
@@ -106,7 +110,10 @@ covers a different question: which pull requests need combined validation.
   evidence for the local issue. A reference with a missing identity is unverified delivery.
 - The eligibility check still excludes an issue by any closing reference number, as before, so a
   foreign same-number reference can still exclude an issue. That existing over-exclusion is out of
-  scope.
+  scope. Superseded by
+  [ADR 0179](0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md):
+  the eligibility check now admits the issue when the only such reference names another
+  repository.
 - A loop whose finish summary reports work not done is named even when its pull request closes the
   issue, and a loop whose pull request does not close its issue is named even when its summary
   reports `notDone: none`.
