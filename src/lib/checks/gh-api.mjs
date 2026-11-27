@@ -489,7 +489,7 @@ async function readReply(read, args, cwd, state) {
   // Both forms carry `targets`, so a caller does not parse the headers again.
   const targets = reply === null ? [] : linkTargets(reply.headers);
   if (targets.length > 0) {
-    state.hosts ??= await requestHosts(read, args, cwd);
+    state.hosts ??= await requestHosts(read, cwd);
   }
   const foreign = targets.length > 0 ? foreignTarget(targets, state.hosts) : null;
   if (foreign !== null) {

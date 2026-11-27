@@ -316,6 +316,19 @@ ${headers}
     assert.equal((await checkRuns(gh, SLUG, SHA, ".", true)).length, 1);
   });
 
+  // Usefulness: the Link-host lookup of the pager runs in the work directory, so an existing gate
+  // read with a same-host Link and no `GH_HOST` never passes an argument array where a path belongs.
+  it("runs the Link host lookup in the work directory", async () => {
+    const { gh } = serve({
+      [page(RUNS, 1)]: reply({ total_count: 1, check_runs: runs(1) }, { headers: SAME_HOST_LINK }),
+    });
+    const checked = async (args, cwd, options) => {
+      if (args[0] === "auth") assert.equal(typeof cwd, "string");
+      return gh(args, cwd, options);
+    };
+    assert.equal((await checkRuns(checked, SLUG, SHA, ".", true)).length, 1);
+  });
+
   // Usefulness: verifies acceptance item 1 (#1046): with no `GH_HOST`, the host `gh` sends the request to is the
   // one host of its configuration, and a Link header that names it is accepted.
   const GHE_LINK = 'Link: <https://ghe.example.com/api/v3/x?page=2>; rel="next"\r\n';
