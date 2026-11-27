@@ -18,24 +18,28 @@ The worker prompt told a probe copy to link the work tree's `node_modules` (issu
 
 ## Decision
 
-1. **The worker probe-copy rule keeps the install bar.** The origin/main sentence `Run no dependency install, repair, or update there.` stays. A probe of old source runs inside the work tree, or its copy stays unlinked, so the rule does not contradict the worker rule against an install in another checkout.
-2. **The rule bars the link.** It states that a work tree directory is never linked or junctioned into the copy.
-3. **The rule states the link-safe removal.** A copy that holds a link or junction is removed without a recursive delete that follows links: `cmd.exe /c rmdir /s /q` with a backslash path in cmd.exe or PowerShell, the `MSYS_NO_PATHCONV=1` Git Bash form with `cygpath -w`, or `rm -rf` on POSIX, in line with issue #998.
-4. **The pnpm dependency-check clause stays.** A probe copy that runs `pnpm run` or `pnpm exec` still sets `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` or calls the installed binary directly, as issue #1145 states.
-5. **The reviewer probe-copy rule stays unchanged.** This change covers the worker path that issue #2028 names.
+1. **A probe copy is a Git work tree.** The rule states that a probe copy of another commit is a Git work tree made with `git worktree add` under the turn temporary directory, not a `git archive` extraction.
+2. **The worker probe-copy rule keeps the install bar.** A probe copy with no dependencies of its own runs only commands that need none, and the origin/main sentence `Run no dependency install, repair, or update there.` stays. The rule therefore does not contradict the worker rule against an install in another checkout.
+3. **The rule bars the link.** It states that a run work tree directory is never linked or junctioned into the probe copy.
+4. **The rule removes the probe work tree first.** `git worktree remove --force` removes the probe work tree before any folder delete.
+5. **The rule states the link-safe removal.** A probe copy that holds a link or junction is removed without a recursive delete that follows links: `cmd.exe /c rmdir /s /q` with a backslash path in cmd.exe or PowerShell, the `MSYS_NO_PATHCONV=1` Git Bash form with `cygpath -w`, or `rm -rf` on POSIX, in line with issue #998.
+6. **The pnpm dependency-check clause stays.** A probe copy that runs `pnpm run` or `pnpm exec` still sets `PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn` or calls the installed binary directly, as issue #1145 states.
+7. **The reviewer probe-copy rule stays unchanged.** This change covers the worker path that issue #2028 names.
 
 ## Acceptance checks
 
-1. The first worker turn states the new probe-copy rule and keeps the origin/main ban on an install, repair, or update there.
-2. The first worker turn states no instruction to link the work tree's `node_modules` into a copy.
-3. The first worker turn states the link-safe removal for a copy that holds a link or junction.
-4. The first worker turn keeps the pnpm dependency-check clause.
+1. The first worker turn states that a probe copy is a `git worktree add` Git work tree, not an archive extraction.
+2. The first worker turn states that a probe copy with no dependencies runs only commands that need none, and keeps the origin/main ban on an install, repair, or update there.
+3. The first worker turn states no instruction to link the work tree's `node_modules` into a probe copy.
+4. The first worker turn removes the probe work tree with `git worktree remove --force` before any folder delete.
+5. The first worker turn states the link-safe removal for a probe copy that holds a link or junction.
+6. The first worker turn keeps the pnpm dependency-check clause.
 
 ## Consequences
 
-- A worker that probes old source runs the probe inside the work tree, or uses an unlinked copy and runs no dependency install, repair, or update there.
+- A worker that probes old source uses a `git worktree add` probe work tree, runs no dependency install, repair, or update there, and removes the probe work tree before any folder delete.
 - A probe copy that holds a link or junction is removed without a recursive delete that follows links.
-- The rule is advisory prompt text. The runtime detects no link and no recursive delete. A `vp` run in an unlinked archive with no `node_modules` can still start an install.
+- The rule is advisory prompt text. The runtime detects no link and no recursive delete.
 - The reviewer prompt still tells its probe copy to link the work tree's dependency directory.
 
 ## Alternatives

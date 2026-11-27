@@ -539,16 +539,19 @@ test("first worker turn bars linking another checkout node_modules into the work
 // Usefulness: verifies requirement "a worker probe copy never links a work tree directory into it"
 // (issue #2028): a recursive delete of such a copy can follow the junction and remove the run work
 // tree's `node_modules`. Issue #2028 records that the worker removed the copies and reported that
-// `node_modules` stayed intact, so the rule also states the link-safe removal for a copy that holds
-// a link.
-test("first worker turn keeps the probe-copy install ban, bars the link, and states the link-safe removal", () => {
+// `node_modules` stayed intact. The issue's own example makes the copy a Git work tree, and the
+// rule states the link-safe removal for a copy that holds a link.
+test("first worker turn makes a probe copy a Git work tree and states the link-safe removal", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "run the probe inside the work tree or keep the copy unlinked: never link or junction a work tree directory into the copy. Run no dependency install, repair, or update there.",
+    "When a probe of another commit needs a copy, the copy is a Git work tree made with `git worktree add` under the turn temporary directory, not an archive extraction, and it never links or junctions a run work tree directory into it. A probe copy with no dependencies of its own runs only commands that need none. Run no dependency install, repair, or update there.",
+  );
+  expect(prompt).toContain(
+    'Remove the probe work tree with `git worktree remove --force "<probe copy>"` before any folder delete.',
   );
   expect(prompt).not.toContain("link the `node_modules` of the work tree into the copy");
   expect(prompt).toContain(
-    'When a copy holds a link or junction, remove it without a recursive delete that follows links: `cmd.exe /c rmdir /s /q "<work tree with backslashes>"` in cmd.exe or PowerShell, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<work tree>")"` in Git Bash, or `rm -rf "<work tree>"` on POSIX.',
+    'When a probe copy holds a link or junction, remove it without a recursive delete that follows links: `cmd.exe /c rmdir /s /q "<probe copy with backslashes>"` in cmd.exe or PowerShell, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<probe copy>")"` in Git Bash, or `rm -rf "<probe copy>"` on POSIX.',
   );
   expect(prompt).toContain(
     "A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`. Every work tree that links the store sees that write.",
