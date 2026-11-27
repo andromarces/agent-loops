@@ -102,6 +102,8 @@ export async function readBatchStatus({ runsRoot, id }) {
   }
   return {
     ...manifest,
+    overlapGroups: manifest.overlapGroups ?? [],
+    overlapIncomplete: manifest.overlapIncomplete ?? [],
     completion: {
       status: manifest.status,
       complete: ["completed", "failed"].includes(manifest.status),

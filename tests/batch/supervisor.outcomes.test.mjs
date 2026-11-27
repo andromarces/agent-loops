@@ -5,12 +5,19 @@ import { expect, test, vi } from "vite-plus/test";
 import { readDecision } from "../../src/batch/decisions.mjs";
 import { loopEntry } from "../../src/batch/loop-records.mjs";
 import { readBatchStatus } from "../../src/batch/status.mjs";
-import { batchPaths, readLoop, updateLoop } from "../../src/batch/store.mjs";
+import {
+  batchPaths,
+  readLoop,
+  readManifest,
+  updateLoop,
+  updateManifest,
+} from "../../src/batch/store.mjs";
 import { newBatchId, runBatch } from "../../src/batch/supervisor.mjs";
 import {
   batchRepo,
   childDouble,
   cleanupRepo,
+  deferred,
   fakeGh,
   fakeGitDeps,
   noNotify,
@@ -240,6 +247,345 @@ test("an exit 0 loop records the pull request its runtime declared", async () =>
     expect(summary.loops[0]).toMatchObject({ status: "succeeded", pr: 42 });
     const status = await readBatchStatus({ runsRoot, id: prepared.id });
     expect(status.loops[0]).toMatchObject({ status: "succeeded", pr: 42 });
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: after a batch ends, the summary and batch status name both pull requests of two
+// succeeded loops and a file beyond the truncated first page that they both change.
+test("a batch reports a common file beyond the first 100 files", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const left = Array.from({ length: 205 }, (_, index) =>
+    index === 150 ? "src/handler.mjs" : `left/f${index}.mjs`,
+  );
+  const right = Array.from({ length: 205 }, (_, index) =>
+    index === 150 ? "src/handler.mjs" : `right/f${index}.mjs`,
+  );
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({
+        files: new Map([
+          [11, left],
+          [12, right],
+        ]),
+      }),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(0);
+    expect(summary.overlapGroups).toEqual([{ pulls: [11, 12], paths: ["src/handler.mjs"] }]);
+    expect(summary.overlapIncomplete).toEqual([]);
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.overlapGroups).toEqual([{ pulls: [11, 12], paths: ["src/handler.mjs"] }]);
+    expect(status.overlapIncomplete).toEqual([]);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a batch whose pull requests share no file reports no group in the summary or in
+// batch status, so an absent overlap never reads as one.
+test("a batch with no common file reports no group", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({
+        files: new Map([
+          [11, ["README.md"]],
+          [12, ["src/handler.mjs"]],
+        ]),
+      }),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(0);
+    expect(summary.overlapGroups).toEqual([]);
+    expect(summary.overlapIncomplete).toEqual([]);
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.overlapGroups).toEqual([]);
+    expect(status.overlapIncomplete).toEqual([]);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a failed file-list read logs a warning, names the pull request incomplete, and
+// leaves the batch completed, so an unreadable pull request never fails the work of other loops.
+test("a failed file-list read logs a warning and does not fail the batch", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({
+        files: new Map([
+          [11, ["src/handler.mjs"]],
+          [12, ["src/handler.mjs"]],
+        ]),
+        unreadableFiles: new Set([12]),
+      }),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(0);
+    expect(summary.status).toBe("completed");
+    expect(summary.overlapGroups).toEqual([]);
+    expect(summary.overlapIncomplete).toEqual([12]);
+    const lines = errorSpy.mock.calls.map((call) => String(call[0]));
+    expect(lines.some((line) => line.includes("warn") && line.includes("12"))).toBe(true);
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.completion).toEqual({ status: "completed", complete: true });
+    expect(status.overlapIncomplete).toEqual([12]);
+  } finally {
+    errorSpy.mockRestore();
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a file list shorter than the changed-file count is reported incomplete, so a
+// truncated list never reads as no overlap.
+test("a file list shorter than the changed-file count is reported incomplete", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({
+        files: new Map([
+          [11, ["src/handler.mjs"]],
+          [12, ["src/handler.mjs"]],
+        ]),
+        mismatchedFiles: new Set([12]),
+      }),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    expect(summary.overlapGroups).toEqual([]);
+    expect(summary.overlapIncomplete).toEqual([12]);
+    const lines = errorSpy.mock.calls.map((call) => String(call[0]));
+    expect(lines.some((line) => line.includes("warn") && line.includes("incomplete"))).toBe(true);
+  } finally {
+    errorSpy.mockRestore();
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a stop during the overlap read keeps the interrupted batch and exit 130, and the
+// resume then reports the overlap, so a stop never records a completed batch without its report.
+test("a stop during the overlap read keeps the interrupt result and the resume reports it", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const files = new Map([
+    [11, ["src/handler.mjs"]],
+    [12, ["src/handler.mjs"]],
+  ]);
+  const inner = fakeGh({ files });
+  const reached = deferred();
+  const gate = deferred();
+  const blockedGh = async (args, cwd) => {
+    if (args[0] === "api" && typeof args[1] === "string" && args[1].includes("/pulls/11/files")) {
+      reached.resolve();
+      await gate.promise;
+    }
+    return inner(args, cwd);
+  };
+  const controller = new AbortController();
+  const notifications = [];
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: blockedGh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: async (event) => {
+          notifications.push(event.kind);
+        },
+        spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await reached.promise;
+    controller.abort();
+    gate.resolve();
+    const { exitCode, summary } = await run;
+    expect(exitCode).toBe(130);
+    expect(summary.status).toBe("interrupted");
+    expect(notifications).not.toContain("batch-completed");
+    const manifest = await readManifest(runsRoot, prepared.id);
+    expect(manifest.status).toBe("interrupted");
+    expect(manifest.overlapGroups).toBeUndefined();
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh({ files }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(resumed.summary.status).toBe("completed");
+    expect(resumed.summary.overlapGroups).toEqual([
+      { pulls: [11, 12], paths: ["src/handler.mjs"] },
+    ]);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a cancel of the original command after another resume completed the batch leaves the
+// completed manifest and its stored failed-read report in place, and still exits 130.
+test("a cancel never moves a batch another process completed", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const files = new Map([
+    [11, ["src/handler.mjs"]],
+    [12, ["src/handler.mjs"]],
+  ]);
+  const inner = fakeGh({ files });
+  const reached = deferred();
+  const gate = deferred();
+  const blockedGh = async (args, cwd) => {
+    if (args[0] === "api" && typeof args[1] === "string" && args[1].includes("/pulls/11/files")) {
+      reached.resolve();
+      await gate.promise;
+    }
+    return inner(args, cwd);
+  };
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: blockedGh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await reached.promise;
+    await updateManifest(runsRoot, prepared.id, (value) => ({
+      ...value,
+      status: "completed",
+      overlapGroups: [],
+      overlapIncomplete: [11, 12],
+    }));
+    controller.abort();
+    gate.resolve();
+    const { exitCode, summary } = await run;
+    expect(exitCode).toBe(130);
+    const manifest = await readManifest(runsRoot, prepared.id);
+    expect(manifest.status).toBe("completed");
+    expect(manifest.overlapGroups).toEqual([]);
+    expect(manifest.overlapIncomplete).toEqual([11, 12]);
+    expect(summary.status).toBe("completed");
+    expect(summary.overlapGroups).toEqual([]);
+    expect(summary.overlapIncomplete).toEqual([11, 12]);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a resume keeps a stored failed-read report, so a later successful read never replaces
+// a report that another process already saved.
+test("a resume keeps a stored failed-read report", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const files = new Map([
+    [11, ["src/handler.mjs"]],
+    [12, ["src/handler.mjs"]],
+  ]);
+  const inner = fakeGh({ files });
+  const reached = deferred();
+  const gate = deferred();
+  const blockedGh = async (args, cwd) => {
+    if (args[0] === "api" && typeof args[1] === "string" && args[1].includes("/pulls/11/files")) {
+      reached.resolve();
+      await gate.promise;
+    }
+    return inner(args, cwd);
+  };
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: blockedGh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await reached.promise;
+    controller.abort();
+    gate.resolve();
+    await run;
+    await updateManifest(runsRoot, prepared.id, (value) => ({
+      ...value,
+      overlapGroups: [],
+      overlapIncomplete: [11, 12],
+    }));
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh({ files }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(resumed.summary.status).toBe("completed");
+    expect(resumed.summary.overlapGroups).toEqual([]);
+    expect(resumed.summary.overlapIncomplete).toEqual([11, 12]);
+    const manifest = await readManifest(runsRoot, prepared.id);
+    expect(manifest.overlapGroups).toEqual([]);
+    expect(manifest.overlapIncomplete).toEqual([11, 12]);
   } finally {
     await cleanupRepo();
   }

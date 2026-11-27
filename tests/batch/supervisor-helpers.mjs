@@ -8,6 +8,7 @@ import { git } from "../../src/batch/git.mjs";
 import { readLoop } from "../../src/batch/store.mjs";
 import { newBatchId } from "../../src/batch/supervisor.mjs";
 import { createTempRepo } from "../git-helpers.mjs";
+import { pageStdout } from "../gh-doubles.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { pollUntil, within } from "../wait-helpers.mjs";
 
@@ -23,7 +24,14 @@ export const SUMMARY = {
   notes: "a note",
 };
 
-export function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
+export function fakeGh({
+  blocked = [],
+  closed = new Set(),
+  pulls = [],
+  files = new Map(),
+  unreadableFiles = new Set(),
+  mismatchedFiles = new Set(),
+} = {}) {
   return async (args) => {
     if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
       return {
@@ -76,10 +84,62 @@ export function fakeGh({ blocked = [], closed = new Set(), pulls = [] } = {}) {
     if (args[0] === "pr" && args[1] === "list") {
       return { status: 0, stdout: JSON.stringify([]), stderr: "" };
     }
+    if (
+      args[0] === "pr" &&
+      args[1] === "view" &&
+      args.some((arg) => arg.startsWith("changedFiles"))
+    ) {
+      const number = Number(args[2]);
+      if (unreadableFiles.has(number)) {
+        return { status: 1, stdout: "", stderr: `no file list for pull request ${number}` };
+      }
+      const count = (files.get(number) ?? []).length + (mismatchedFiles.has(number) ? 1 : 0);
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          changedFiles: count,
+          headRefOid: `head-${number}`,
+          baseRefOid: `base-${number}`,
+        }),
+        stderr: "",
+      };
+    }
+    if (
+      args[0] === "pr" &&
+      args[1] === "view" &&
+      args.some((arg) => arg.startsWith("headRefOid"))
+    ) {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          headRefOid: `head-${Number(args[2])}`,
+          baseRefOid: `base-${Number(args[2])}`,
+        }),
+        stderr: "",
+      };
+    }
+    const filePage = /\/pulls\/(\d+)\/files\?per_page=100&page=(\d+)$/.exec(args[1] ?? "");
+    if (args[0] === "api" && filePage !== null && args[2] === "--include") {
+      const number = Number(filePage[1]);
+      if (unreadableFiles.has(number)) {
+        return { status: 1, stdout: "", stderr: `no file list for pull request ${number}` };
+      }
+      const start = (Number(filePage[2]) - 1) * 100;
+      const list = (files.get(number) ?? []).slice(start, start + 100);
+      return {
+        status: 0,
+        stdout: pageStdout(list.map((filename) => ({ filename }))),
+        stderr: "",
+      };
+    }
     if (args[0] === "repo" && args[1] === "view") {
       return {
         status: 0,
-        stdout: JSON.stringify({ nameWithOwner: "o/r", defaultBranchRef: { name: "main" } }),
+        stdout: JSON.stringify({
+          nameWithOwner: "o/r",
+          url: "https://github.com/o/r",
+          defaultBranchRef: { name: "main" },
+        }),
         stderr: "",
       };
     }
