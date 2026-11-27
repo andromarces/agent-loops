@@ -2,7 +2,19 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+The superseded part is decision 1's clause that a loop without an integer pull request number is
+not read ([ADR 0177](0177-read-the-undeclared-pull-request-in-the-batch-overlap-report.md)). Every
+other decision, consequence, and alternative stays in force.
+
+## Superseded by
+
+[adr/0177-read-the-undeclared-pull-request-in-the-batch-overlap-report.md](0177-read-the-undeclared-pull-request-in-the-batch-overlap-report.md)
+partially supersedes this ADR. The replaced part is decision 1's clause that a loop without an
+integer pull request number is not read. A succeeded loop now names its pull request as `pr`,
+else `prUndeclared`, and one with neither number is named in a warning. Every other decision,
+consequence, and alternative stays in force.
 
 ## Date
 

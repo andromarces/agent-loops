@@ -290,6 +290,40 @@ test("a batch reports a common file beyond the first 100 files", async () => {
   }
 });
 
+// Usefulness: a batch whose succeeded loops hold only undeclared pull requests lists both numbers
+// and their common file in the summary and in batch status, so a refused declaration never hides
+// an overlap.
+test("a batch reports an overlap of two undeclared pull requests", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ undeclared: 11 });
+  const second = childDouble({ undeclared: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const files = new Map([
+    [11, ["src/handler.mjs", "left/only.mjs"]],
+    [12, ["src/handler.mjs", "right/only.mjs"]],
+  ]);
+  try {
+    const { exitCode, summary } = await runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh({ files }),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    expect(exitCode).toBe(0);
+    expect(summary.overlapGroups).toEqual([{ pulls: [11, 12], paths: ["src/handler.mjs"] }]);
+    expect(summary.overlapIncomplete).toEqual([]);
+    expect(summary.loops.map((entry) => entry.prUndeclared)).toEqual([11, 12]);
+    const status = await readBatchStatus({ runsRoot, id: prepared.id });
+    expect(status.overlapGroups).toEqual([{ pulls: [11, 12], paths: ["src/handler.mjs"] }]);
+    expect(status.overlapIncomplete).toEqual([]);
+    expect(status.loops.map((entry) => entry.prUndeclared)).toEqual([11, 12]);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
 // Usefulness: a batch whose pull requests share no file reports no group in the summary or in
 // batch status, so an absent overlap never reads as one.
 test("a batch with no common file reports no group", async () => {

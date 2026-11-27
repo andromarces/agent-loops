@@ -139,18 +139,72 @@ test("a batch with no common file reports no group", async () => {
   expect(calls.some((call) => call.includes("pr view 3 "))).toBe(false);
 });
 
-// Usefulness: a loop without a recorded pull request is skipped without a read, so a batch of
-// tasks and one pull request makes no file-list read.
-test("a loop without a pull request makes no file-list read", async () => {
+// Usefulness: a succeeded loop with no pull request number is named in a warning instead of
+// leaving the report silently, so a batch of one pull request never reads as a proved no overlap.
+test("a succeeded loop with no pull request number logs a warning", async () => {
   const { gh, calls } = ghWith(new Map([[11, ["a.mjs"]]]));
+  const warnings = [];
   const report = await overlapReportOf({
-    loops: [loop(null), loop(11)],
+    loops: [{ issue: 7, status: "succeeded", pr: null, prUndeclared: null }, loop(11)],
+    gh,
+    repo: "/repo",
+    warn: (message) => warnings.push(message),
+  });
+  expect(report).toEqual({ groups: [], incomplete: [] });
+  expect(calls).toEqual([]);
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("7");
+  expect(warnings[0]).toContain("pull request");
+});
+
+// Usefulness: a pull request that the runtime recorded as undeclared is read and grouped, so a
+// refused declaration never hides a shared file from the report.
+test("an undeclared pull request is read and forms a group", async () => {
+  const { gh } = ghWith(
+    new Map([
+      [11, ["src/handler.mjs"]],
+      [12, ["src/handler.mjs"]],
+    ]),
+  );
+  const report = await overlapReportOf({
+    loops: [
+      { status: "succeeded", pr: null, prUndeclared: 11 },
+      { status: "succeeded", pr: null, prUndeclared: 12 },
+    ],
     gh,
     repo: "/repo",
     warn: () => {},
   });
-  expect(report).toEqual({ groups: [], incomplete: [] });
-  expect(calls).toEqual([]);
+  expect(report).toEqual({
+    groups: [{ pulls: [11, 12], paths: ["src/handler.mjs"] }],
+    incomplete: [],
+  });
+});
+
+// Usefulness: a declared pull request wins over an undeclared number, so the read takes the same
+// pull request that the merged proof and batch status name.
+test("a declared pull request wins over an undeclared number", async () => {
+  const { gh, calls } = ghWith(
+    new Map([
+      [11, ["src/handler.mjs"]],
+      [12, ["src/handler.mjs"]],
+      [99, ["src/handler.mjs"]],
+    ]),
+  );
+  const report = await overlapReportOf({
+    loops: [
+      { status: "succeeded", pr: 11, prUndeclared: 99 },
+      { status: "succeeded", pr: null, prUndeclared: 12 },
+    ],
+    gh,
+    repo: "/repo",
+    warn: () => {},
+  });
+  expect(report).toEqual({
+    groups: [{ pulls: [11, 12], paths: ["src/handler.mjs"] }],
+    incomplete: [],
+  });
+  expect(calls.some((call) => call.includes("pr view 99 "))).toBe(false);
 });
 
 // Usefulness: a failed file-list read logs a warning, names the pull request as incomplete, and
