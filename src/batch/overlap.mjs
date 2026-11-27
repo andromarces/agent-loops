@@ -1,4 +1,5 @@
-// The changed-file overlap of a finished batch (adr/0176-report-batch-pull-requests-that-change-the-same-files.md).
+// The changed-file overlap of a finished batch (adr/0176-report-batch-pull-requests-that-change-the-same-files.md,
+// adr/0177-read-the-undeclared-pull-request-in-the-batch-overlap-report.md).
 // It only reports the groups: the batch never merges, combines, or tests the pull requests.
 import { ghApi, pagedRead } from "../lib/checks/gh-api.mjs";
 import { isJsonObject } from "../lib/json.mjs";
@@ -144,38 +145,46 @@ function groupEntries(entries) {
 /**
  * Reads every changed-file list of the pull requests of the succeeded loops and returns the groups
  * that share at least one path, beside the pull requests whose list that read cannot prove
- * complete. `loops` holds loop records, and a loop without a succeeded status or an integer pull
- * request number is not read. A failed or incomplete read logs one warning through `warn` and
+ * complete. `loops` holds loop records, and a loop without a succeeded status is not read. A
+ * succeeded loop names its pull request as `pr`, else `prUndeclared`, the order that the merged
+ * proof and `batch status` use; one with neither integer logs one warning through `warn` and is
+ * left out of the comparison. A failed or incomplete read logs one warning through `warn` and
  * leaves out only that pull request.
  * @param {{ loops: Array<object>, gh: Function, repo: string, warn?: (message: string) => void }} options
  * @returns {Promise<{ groups: Array<{ pulls: number[], paths: string[] }>, incomplete: number[] }>}
  */
 export async function overlapReportOf({ loops, gh, repo, warn = logWarn }) {
-  const numbers = [
-    ...new Set(
-      loops
-        .filter((loop) => loop.status === "succeeded" && Number.isInteger(loop.pr))
-        .map((loop) => loop.pr),
-    ),
-  ].sort((a, b) => a - b);
+  const numbers = [];
+  for (const loop of loops) {
+    if (loop.status !== "succeeded") continue;
+    const pr = Number.isInteger(loop.pr) ? loop.pr : loop.prUndeclared;
+    if (Number.isInteger(pr)) {
+      numbers.push(pr);
+    } else {
+      warn(
+        `loop ${loop.issue ?? loop.key}: the succeeded loop names no pull request number, so the overlap read leaves it out`,
+      );
+    }
+  }
+  const unique = [...new Set(numbers)].sort((a, b) => a - b);
   // One pull request cannot overlap, and no read is needed to report that.
-  if (numbers.length < 2) return { groups: [], incomplete: [] };
+  if (unique.length < 2) return { groups: [], incomplete: [] };
   let location;
   try {
     location = await repoLocationOf(gh, repo);
   } catch (err) {
-    for (const pr of numbers) {
+    for (const pr of unique) {
       warn(`pull request ${pr}: the repository name read failed: ${err?.message ?? err}`);
     }
-    return { groups: [], incomplete: numbers };
+    return { groups: [], incomplete: unique };
   }
   if (location === null) {
-    for (const pr of numbers) {
+    for (const pr of unique) {
       warn(`pull request ${pr}: the repository name read named no readable owner, name, and host`);
     }
-    return { groups: [], incomplete: numbers };
+    return { groups: [], incomplete: unique };
   }
-  const reads = await mapInBatches(numbers, READ_BATCH_SIZE, async (pr) => {
+  const reads = await mapInBatches(unique, READ_BATCH_SIZE, async (pr) => {
     try {
       return { pr, paths: await completePathsOf(gh, repo, location, pr) };
     } catch (err) {

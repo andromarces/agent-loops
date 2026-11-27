@@ -32,7 +32,7 @@ Do not choose a revision or select issues. Read an audit with `agent-loop batch 
 
 Resolve the named work tree state, then run `batch audit resume`. When the user asks to remove a finished audit, run `agent-loop batch audit remove --audit <id>`. Never delete an audit work tree or store by hand.
 
-After a batch ends, name each group in `overlapGroups` before the user merges: its pull requests need combined validation. Name each pull request in `overlapIncomplete` too: its file list was unread or unprovable, so the report may miss an overlap. The batch only reports the overlap, so it merges, combines, and tests nothing itself.
+After a batch ends, name each group in `overlapGroups` before the user merges: its pull requests need combined validation. Name each pull request in `overlapIncomplete` too: its file list was unread or unprovable, so the report may miss an overlap. Name a warning that a succeeded loop has no pull request number: the report leaves that loop out. The batch only reports the overlap, so it merges, combines, and tests nothing itself.
 
 After a batch ends, list each loop's `report.summary` items: `deferred`, `notDone`, `open`, and `notes`. List a `review-only` report's `reviewerFindings`, `reviewerBlockers`, `reviewerNotes`, and `reviewerDeferred` too. A `read` report with no finish summary also holds `lastTurnItems`. Name each loop whose `report.state` is not `read`, and name its `transcript`.
 
