@@ -2,7 +2,13 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+The superseded part is decision 5's rule that the parent names every literal entry to the user, which [ADR 0175](0175-treat-the-opencode-pty-daemon-folder-as-an-expected-literal-temporary-directory-entry.md) replaces for a `literal-tmp/opencode-pty-<uid>` name, where `<uid>` is a numeric user id, on any turn. Every other part stays in force.
+
+## Superseded by
+
+[adr/0175-treat-the-opencode-pty-daemon-folder-as-an-expected-literal-temporary-directory-entry.md](0175-treat-the-opencode-pty-daemon-folder-as-an-expected-literal-temporary-directory-entry.md) partially supersedes this ADR. The replaced part is decision 5's rule that the parent names every literal entry to the user: a `literal-tmp/opencode-pty-<uid>` name, where `<uid>` is a numeric user id, is an expected tool entry on any turn and adds no finish item. The consequence that a macOS turn which writes directly in `/tmp` leaves a name for the parent and the user to act on holds for every other name. Decisions 1 to 4 and the rest of decision 5 stay in force.
 
 ## Supersedes
 
