@@ -4,7 +4,7 @@
 
 partially-superseded
 
-The superseded parts are the held-lock sentence of decision 9 ([ADR 0117](0117-state-the-held-lock-paused-rule-and-its-precedence.md)), the event list of decision 6 ([ADR 0127](0127-notify-when-only-owner-merges-remain.md)), and the Windows notifier mechanics of decision 6 ([ADR 0161](0161-keep-windows-notifications-in-notification-center.md)). Every other part of every decision, consequence, and acceptance check stays in force.
+The superseded parts are the held-lock sentence of decision 9 ([ADR 0117](0117-state-the-held-lock-paused-rule-and-its-precedence.md)), the event list of decision 6 ([ADR 0127](0127-notify-when-only-owner-merges-remain.md)), the Windows notifier mechanics of decision 6 ([ADR 0161](0161-keep-windows-notifications-in-notification-center.md)), and the `complete` rule of decision 8 ([ADR 0178](0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md)). Every other part of every decision, consequence, and acceptance check stays in force.
 
 ## Superseded by
 
@@ -13,6 +13,8 @@ The superseded parts are the held-lock sentence of decision 9 ([ADR 0117](0117-s
 [adr/0127-notify-when-only-owner-merges-remain.md](0127-notify-when-only-owner-merges-remain.md) partially supersedes this ADR. The replaced part is the event list of decision 6, which names three events. Every other part of decision 6, including the notifier mechanics, and every other decision, consequence, and acceptance check stays in force.
 
 [adr/0161-keep-windows-notifications-in-notification-center.md](0161-keep-windows-notifications-in-notification-center.md) partially supersedes this ADR. The replaced part is the Windows notifier mechanics of decision 6: the tray balloon, its icon, and the wait that precedes the disposal. The rest of decision 6, including the macOS command, the environment-value rule, the text bound, the process bound, and the warning-only failure, and every other decision, consequence, and acceptance check stays in force.
+
+[adr/0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md](0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md) partially supersedes this ADR. The replaced part is decision 8's rule that `complete` is true only for the statuses `completed` and `failed`. `complete` is also false while a loop entry is partial. The rest of decision 8, including the per-loop `decision`, `blockingIssues`, and `requiredMerges` fields and the write-nothing rule of `batch status`, and every other decision, consequence, and acceptance check stays in force.
 
 ## Supersedes
 

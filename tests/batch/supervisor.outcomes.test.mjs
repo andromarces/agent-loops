@@ -342,6 +342,10 @@ test("a failed file-list read logs a warning and does not fail the batch", async
           [12, ["src/handler.mjs"]],
         ]),
         unreadableFiles: new Set([12]),
+        closingReferences: new Map([
+          [11, [1]],
+          [12, [2]],
+        ]),
       }),
       deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
     });
@@ -1292,10 +1296,18 @@ async function runTwo(options, gh = fakeGh()) {
 // delivered. Not redundant: no other test covers the partial marker of a loop entry.
 test("a succeeded loop whose finish summary reports the item not done is marked partial", async () => {
   const notDone = "the issue is not fixed and the pull request does not close it";
-  const { summary, status } = await runTwo([
-    { pr: 11, summary: summaryOf(notDone) },
-    { pr: 12, summary: summaryOf("none") },
-  ]);
+  const { summary, status } = await runTwo(
+    [
+      { pr: 11, summary: summaryOf(notDone) },
+      { pr: 12, summary: summaryOf("none") },
+    ],
+    fakeGh({
+      closingReferences: new Map([
+        [11, [1]],
+        [12, [2]],
+      ]),
+    }),
+  );
 
   expect(summary.status).toBe("completed");
   expect(summary.loops[0]).toMatchObject({
@@ -1316,10 +1328,18 @@ test("a succeeded loop whose finish summary reports the item not done is marked 
 // Usefulness: issue #2049 — a batch whose loops all report notDone none shows no marker and keeps
 // its completion flag. Not redundant: it guards against marking every succeeded loop.
 test("a batch whose loops all report notDone none shows no partial marker", async () => {
-  const { summary, status } = await runTwo([
-    { pr: 11, summary: summaryOf("none") },
-    { pr: 12, summary: summaryOf("none") },
-  ]);
+  const { summary, status } = await runTwo(
+    [
+      { pr: 11, summary: summaryOf("none") },
+      { pr: 12, summary: summaryOf("none") },
+    ],
+    fakeGh({
+      closingReferences: new Map([
+        [11, [1]],
+        [12, [2]],
+      ]),
+    }),
+  );
 
   expect(summary.loops.map((loop) => loop.partial)).toEqual([undefined, undefined]);
   expect(status.loops.map((loop) => loop.partial)).toEqual([undefined, undefined]);
@@ -1352,4 +1372,249 @@ test("a succeeded loop whose pull request does not close its issue is marked par
   expect(summary.loops[1].partial).toBeUndefined();
   expect(status.loops[0].partial).toBe(true);
   expect(status.completion).toEqual({ status: "completed", complete: false });
+});
+
+// Usefulness: issue #2049 review — an issue loop that succeeds with no pull request holds no
+// delivery evidence, so it is marked partial. Not redundant: the earlier cases all hold a
+// pull request.
+test("a succeeded issue loop with no pull request is marked partial", async () => {
+  const { summary, status } = await runTwo(
+    [{ summary: summaryOf("none") }, { pr: 12, summary: summaryOf("none") }],
+    fakeGh({ closingReferences: new Map([[12, [2]]]) }),
+  );
+
+  expect(summary.loops[0]).toMatchObject({
+    status: "succeeded",
+    partial: true,
+    partialReasons: ["no-pull-request"],
+  });
+  expect(summary.loops[1].partial).toBeUndefined();
+  expect(status.completion).toEqual({ status: "completed", complete: false });
+});
+
+// Usefulness: issue #2049 review — an unreadable closing-reference read never reads as fully
+// delivered, and it logs the warning that the ADR promises. Not redundant: the earlier partial
+// cases all hold readable evidence.
+test("an unreadable closing-reference read marks the loop partial and warns", async () => {
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { summary, status } = await runTwo(
+      [
+        { pr: 11, summary: summaryOf("none") },
+        { pr: 12, summary: summaryOf("none") },
+      ],
+      fakeGh({ unreadableClosures: new Set([11]), closingReferences: new Map([[12, [2]]]) }),
+    );
+
+    expect(summary.loops[0]).toMatchObject({
+      status: "succeeded",
+      partial: true,
+      partialReasons: ["closing-reference-unread"],
+    });
+    expect(summary.loops[1].partial).toBeUndefined();
+    expect(status.completion).toEqual({ status: "completed", complete: false });
+    const lines = errorSpy.mock.calls.map((call) => String(call[0]));
+    expect(
+      lines.some(
+        (line) =>
+          line.includes("warn") &&
+          line.includes("closing-reference read") &&
+          line.includes("pull request 11"),
+      ),
+    ).toBe(true);
+  } finally {
+    errorSpy.mockRestore();
+  }
+});
+
+// Usefulness: issue #2049 review — a reply with no closing reference list is unreadable, so it
+// warns and never reads as delivered. Not redundant: it covers the malformed reply apart from the
+// failed call.
+test("a reply without a closing reference list marks the loop partial and warns", async () => {
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { summary } = await runTwo(
+      [
+        { pr: 11, summary: summaryOf("none") },
+        { pr: 12, summary: summaryOf("none") },
+      ],
+      fakeGh({ malformedClosures: new Set([11]), closingReferences: new Map([[12, [2]]]) }),
+    );
+
+    expect(summary.loops[0]).toMatchObject({
+      status: "succeeded",
+      partial: true,
+      partialReasons: ["closing-reference-unread"],
+    });
+    const lines = errorSpy.mock.calls.map((call) => String(call[0]));
+    expect(
+      lines.some(
+        (line) =>
+          line.includes("warn") &&
+          line.includes("closing-reference read") &&
+          line.includes("no closing reference list"),
+      ),
+    ).toBe(true);
+  } finally {
+    errorSpy.mockRestore();
+  }
+});
+
+// Usefulness: issue #2049 review — a commit message that closes the issue is the same delivery
+// evidence that the eligibility check reads, so the loop is not marked partial. Not redundant: it
+// covers evidence outside the closing reference list.
+test("a commit message that closes the issue counts as delivery evidence", async () => {
+  const { summary, status } = await runTwo(
+    [
+      { pr: 11, summary: summaryOf("none") },
+      { pr: 12, summary: summaryOf("none") },
+    ],
+    fakeGh({
+      closingReferences: new Map([
+        [11, []],
+        [12, []],
+      ]),
+      closureCommits: new Map([
+        [11, ["Fix the parser\n\nFixes #1"]],
+        [12, ["Refs #2"]],
+      ]),
+    }),
+  );
+
+  expect(summary.loops[0].partial).toBeUndefined();
+  expect(summary.loops[1]).toMatchObject({
+    status: "succeeded",
+    partial: true,
+    partialReasons: ["pull-request-does-not-close-issue"],
+  });
+  expect(status.completion).toEqual({ status: "completed", complete: false });
+});
+
+// Usefulness: issue #2049 review — a body keyword counts on a pull request whose base is not the
+// default branch, as it does for the eligibility check. Not redundant: it covers the body evidence
+// apart from the commit evidence.
+test("a body keyword on a non-default base counts as delivery evidence", async () => {
+  const { summary } = await runTwo(
+    [
+      { pr: 11, summary: summaryOf("none") },
+      { pr: 12, summary: summaryOf("none") },
+    ],
+    fakeGh({
+      closingReferences: new Map([
+        [11, []],
+        [12, []],
+      ]),
+      closureBody: new Map([
+        [11, "This fixes #1."],
+        [12, "This touches #2."],
+      ]),
+      closureBase: new Map([
+        [11, "release"],
+        [12, "release"],
+      ]),
+    }),
+  );
+
+  expect(summary.loops[0].partial).toBeUndefined();
+  expect(summary.loops[1]).toMatchObject({
+    status: "succeeded",
+    partial: true,
+    partialReasons: ["pull-request-does-not-close-issue"],
+  });
+});
+
+// Usefulness: issue #2049 review — the delivery check reads only the final attempt's pull request,
+// so an undeclared pull request that the final attempt cleared is no delivery evidence. Not
+// redundant: it covers a resumed loop with a stale checkpoint value.
+test("a resumed loop reads no cleared undeclared pull request for delivery", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ steps: 1, undeclared: 42, hold: true });
+  const second = childDouble({ steps: 1, summary: summaryOf("none") });
+  const closingCalls = [];
+  const gh = fakeGh({ closingReferences: new Map([[42, [1]]]), closingCalls });
+  try {
+    const controller = new AbortController();
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: first.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await waitForLaunch(first);
+    controller.abort();
+    await run;
+    expect((await readLoop(runsRoot, prepared.id, 1)).prUndeclared).toBe(42);
+
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh,
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: second.spawn, installSignal: false },
+    });
+
+    expect(resumed.summary.loops[0]).toMatchObject({
+      status: "succeeded",
+      pr: null,
+      prUndeclared: null,
+      partial: true,
+      partialReasons: ["no-pull-request"],
+    });
+    expect(closingCalls).not.toContain(42);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: issue #2049 review — a legacy issue checkpoint without a kind still gets the closing
+// read, as the rest of the batch code treats a missing kind as an issue item. Not redundant: it
+// covers the legacy checkpoint shape.
+test("a legacy issue checkpoint without a kind still reads the closing reference", async () => {
+  const prepared = await waitPrepared([1]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ steps: 1, hold: true });
+  const second = childDouble({ steps: 1, pr: 11, summary: summaryOf("none") });
+  const closingCalls = [];
+  try {
+    const controller = new AbortController();
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: fakeGh(),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: first.spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await waitForLaunch(first);
+    controller.abort();
+    await run;
+    await updateLoop(runsRoot, prepared.id, 1, (loop) => {
+      const next = { ...loop };
+      delete next.kind;
+      return next;
+    });
+
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh({ closingReferences: new Map([[11, [1]]]), closingCalls }),
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn: second.spawn, installSignal: false },
+    });
+
+    expect(resumed.summary.loops[0]).toMatchObject({ status: "succeeded", pr: 11 });
+    expect(resumed.summary.loops[0].partial).toBeUndefined();
+    expect(closingCalls).toContain(11);
+  } finally {
+    await cleanupRepo();
+  }
 });

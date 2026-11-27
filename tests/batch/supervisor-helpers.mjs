@@ -32,18 +32,59 @@ export function fakeGh({
   unreadableFiles = new Set(),
   mismatchedFiles = new Set(),
   closingReferences = new Map(),
+  closureBody = new Map(),
+  closureBase = new Map(),
+  closureCommits = new Map(),
+  unreadableClosures = new Set(),
+  malformedClosures = new Set(),
+  closingCalls = [],
 } = {}) {
   return async (args) => {
-    if (args[0] === "pr" && args[1] === "view" && args.includes("closingIssuesReferences")) {
-      const references = closingReferences.get(Number(args[2]));
-      if (references === undefined) {
+    if (
+      args[0] === "pr" &&
+      args[1] === "view" &&
+      args.some((arg) => String(arg).includes("closingIssuesReferences"))
+    ) {
+      const number = Number(args[2]);
+      closingCalls.push(number);
+      if (unreadableClosures.has(number)) {
+        return { status: 1, stdout: "", stderr: `no pull request ${args[2]}` };
+      }
+      if (malformedClosures.has(number)) {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ number, body: "", baseRefName: "main" }),
+          stderr: "",
+        };
+      }
+      const references = closingReferences.get(number);
+      const body = closureBody.get(number);
+      const commits = closureCommits.get(number);
+      if (references === undefined && body === undefined && commits === undefined) {
         return { status: 1, stdout: "", stderr: `no pull request ${args[2]}` };
       }
       return {
         status: 0,
         stdout: JSON.stringify({
-          closingIssuesReferences: references.map((number) => ({ number })),
+          number,
+          closingIssuesReferences: (references ?? []).map((issue) => ({ number: issue })),
+          body: body ?? "",
+          baseRefName: closureBase.get(number) ?? "main",
         }),
+        stderr: "",
+      };
+    }
+    const commitPage = /\/pulls\/(\d+)\/commits\?per_page=100&page=(\d+)$/.exec(args[1] ?? "");
+    if (args[0] === "api" && commitPage !== null && args[2] === undefined) {
+      const number = Number(commitPage[1]);
+      const page = Number(commitPage[2]);
+      const messages = closureCommits.get(number) ?? [];
+      const start = (page - 1) * 100;
+      return {
+        status: 0,
+        stdout: JSON.stringify(
+          messages.slice(start, start + 100).map((message) => ({ commit: { message } })),
+        ),
         stderr: "",
       };
     }

@@ -345,6 +345,104 @@ export function hasStructuralMinimum(body) {
 }
 
 /**
+ * The repository name and default branch of `repo`, read through `gh repo view`.
+ * @returns {Promise<{ nameWithOwner: string, defaultBranch: string }>}
+ */
+export async function readRepositoryIdentity({ gh, repo }) {
+  const view = await readGhJson(
+    gh,
+    ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"],
+    repo,
+  );
+  if (!isJsonObject(view) || typeof view.nameWithOwner !== "string") {
+    throw new Error("gh repo view returned no repository name");
+  }
+  if (!isJsonObject(view.defaultBranchRef) || typeof view.defaultBranchRef.name !== "string") {
+    throw new Error("gh repo view returned no default branch name");
+  }
+  return { nameWithOwner: view.nameWithOwner, defaultBranch: view.defaultBranchRef.name };
+}
+
+/**
+ * The issue numbers that one pull request closes in `repository`, from its closing references, its
+ * body keywords when its base is not the default branch, and its commit messages. `incomplete` is
+ * true when the commit read reached the API's 250-commit page, so an absent issue is not proven
+ * absent.
+ * @returns {Promise<{ closed: Set<number>, incomplete: boolean }>}
+ */
+export async function readPullRequestClosures({
+  gh,
+  repo,
+  number,
+  references,
+  body,
+  baseRefName,
+  repository,
+}) {
+  const closed = new Set();
+  for (const reference of references ?? []) {
+    if (Number.isInteger(reference?.number)) closed.add(reference.number);
+  }
+  if (baseRefName !== repository.defaultBranch) {
+    for (const issueNumber of closingIssueNumbers(body, repository.nameWithOwner)) {
+      closed.add(issueNumber);
+    }
+  }
+  let count = 0;
+  for (let page = 1; page <= 3 && count < 250; page += 1) {
+    const commits = await readGhJson(
+      gh,
+      [
+        "api",
+        `repos/${repository.nameWithOwner}/pulls/${number}/commits?per_page=100&page=${page}`,
+      ],
+      repo,
+    );
+    if (!Array.isArray(commits)) throw new Error("the commit read returned no list");
+    if (commits.length === 0) break;
+    count += commits.length;
+    for (const item of commits) {
+      const message = item?.commit?.message;
+      if (typeof message !== "string") continue;
+      for (const match of message.matchAll(CLOSING_KEYWORD)) {
+        closed.add(Number(match[1]));
+      }
+    }
+    if (commits.length < 100) break;
+  }
+  return { closed, incomplete: count >= 250 };
+}
+
+/**
+ * The issue numbers that one pull request closes, from its own closing references, body, base
+ * branch, and commit messages. A reply without a closing reference list is unreadable and throws.
+ * @returns {Promise<{ closed: Set<number>, incomplete: boolean }>}
+ */
+export async function readPullRequestClosingNumbers({ gh, repo, number, repository }) {
+  const view = await readGhJson(
+    gh,
+    ["pr", "view", String(number), "--json", "number,closingIssuesReferences,body,baseRefName"],
+    repo,
+  );
+  if (!isJsonObject(view) || typeof view.baseRefName !== "string") {
+    throw new Error("the pull request read named no base branch");
+  }
+  if (typeof view.body !== "string") throw new Error("the pull request read named no body");
+  if (!Array.isArray(view.closingIssuesReferences)) {
+    throw new Error("the pull request read named no closing reference list");
+  }
+  return await readPullRequestClosures({
+    gh,
+    repo,
+    number,
+    references: view.closingIssuesReferences,
+    body: view.body,
+    baseRefName: view.baseRefName,
+    repository,
+  });
+}
+
+/**
  * Reads every open pull request and the issues its body or commit messages close. Throws when a
  * batch-wide read fails, so the caller pauses the queue. `incompletePr` names a pull request whose
  * commit read reached the API's 250-commit page. The caller then stops launching. `repository` is
@@ -386,68 +484,32 @@ export async function readOpenPrClosures({ gh, repo, repository = null }) {
     if (typeof entry.body !== "string") {
       throw new Error("gh pr list returned a malformed body");
     }
-    const references = entry.closingIssuesReferences;
-    if (references !== undefined && !Array.isArray(references)) {
+    if (
+      entry.closingIssuesReferences !== undefined &&
+      !Array.isArray(entry.closingIssuesReferences)
+    ) {
       throw new Error("gh pr list returned malformed closing references");
-    }
-    for (const reference of references ?? []) {
-      if (Number.isInteger(reference?.number)) {
-        closed.add(reference.number);
-        addSource(reference.number, entry);
-      }
     }
   }
   if (list.length === 0) return { closed, incompletePr: null, sources, repository };
 
-  let cached = repository;
-  if (cached === null) {
-    const view = await readGhJson(
-      gh,
-      ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"],
-      repo,
-    );
-    if (!isJsonObject(view) || typeof view.nameWithOwner !== "string") {
-      throw new Error("gh repo view returned no repository name");
-    }
-    if (!isJsonObject(view.defaultBranchRef) || typeof view.defaultBranchRef.name !== "string") {
-      throw new Error("gh repo view returned no default branch name");
-    }
-    cached = { nameWithOwner: view.nameWithOwner, defaultBranch: view.defaultBranchRef.name };
-  }
+  const cached = repository ?? (await readRepositoryIdentity({ gh, repo }));
+  let incompletePr = null;
   for (const entry of list) {
-    if (entry.baseRefName === cached.defaultBranch) continue;
-    for (const issueNumber of closingIssueNumbers(entry.body, cached.nameWithOwner)) {
+    const closures = await readPullRequestClosures({
+      gh,
+      repo,
+      number: entry.number,
+      references: entry.closingIssuesReferences,
+      body: entry.body,
+      baseRefName: entry.baseRefName,
+      repository: cached,
+    });
+    for (const issueNumber of closures.closed) {
       closed.add(issueNumber);
       addSource(issueNumber, entry);
     }
-  }
-  let incompletePr = null;
-  for (const entry of list) {
-    let count = 0;
-    for (let page = 1; page <= 3 && count < 250; page += 1) {
-      const commits = await readGhJson(
-        gh,
-        [
-          "api",
-          `repos/${cached.nameWithOwner}/pulls/${entry.number}/commits?per_page=100&page=${page}`,
-        ],
-        repo,
-      );
-      if (!Array.isArray(commits)) throw new Error("the commit read returned no list");
-      if (commits.length === 0) break;
-      count += commits.length;
-      for (const item of commits) {
-        const message = item?.commit?.message;
-        if (typeof message !== "string") continue;
-        for (const match of message.matchAll(CLOSING_KEYWORD)) {
-          const number = Number(match[1]);
-          closed.add(number);
-          addSource(number, entry);
-        }
-      }
-      if (commits.length < 100) break;
-    }
-    if (count >= 250) {
+    if (closures.incomplete) {
       incompletePr = entry.number;
       break;
     }

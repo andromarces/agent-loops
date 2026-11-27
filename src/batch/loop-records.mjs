@@ -54,8 +54,17 @@ export function queuedLoop(paths, id, item, maxSteps) {
 }
 
 /**
+ * Whether a loop record names an issue item. A record written before item kinds carries no kind and
+ * is an issue item, as the batch entry reads it.
+ */
+export function isIssueLoop(loop) {
+  return loop?.kind === undefined || loop.kind === "issue";
+}
+
+/**
  * The reasons a succeeded loop reads as partial, or an empty list. A finish summary that reports
- * the item not done and a pull request that does not close the issue each name one reason
+ * the item not done names one reason. An issue item also names one reason when it holds no pull
+ * request, its pull request does not close the issue, or the closing evidence cannot be read
  * (adr/0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md).
  * @returns {string[]}
  */
@@ -70,7 +79,14 @@ function partialReasons(loop) {
   ) {
     reasons.push("not-done");
   }
-  if (loop.pullRequestClosesIssue === false) reasons.push("pull-request-does-not-close-issue");
+  if (isIssueLoop(loop)) {
+    if ((loop.pr ?? loop.prUndeclared ?? null) === null) reasons.push("no-pull-request");
+    else if (loop.pullRequestClosesIssue === false) {
+      reasons.push("pull-request-does-not-close-issue");
+    } else if (loop.pullRequestClosesIssue !== true) {
+      reasons.push("closing-reference-unread");
+    }
+  }
   return reasons;
 }
 
