@@ -204,6 +204,10 @@ setTimeout(() => process.exit(0), 60000);
 const DEAD_TURN_WAIT_MS = 5000;
 const DEAD_TURN_POLL_MS = 50;
 const STATE_READ_BOUND_MS = 5000;
+// The case's own timeout and the margin kept to report a budget failure before it.
+const CASE_TIMEOUT_MS = 60_000;
+const CASE_MARGIN_MS = 2000;
+const STATE_READ_RESERVE_MS = 1000;
 
 /** Races one liveness read against the time left in the wait, without a loose rejection. */
 function readLiveness(promise, ms, label) {
@@ -274,20 +278,22 @@ async function waitForKilledTurn(
     dispatcherExited,
     waitForFake = true,
     boundMs = DEAD_TURN_WAIT_MS,
+    budgetMs = boundMs,
     pollMs = DEAD_TURN_POLL_MS,
     reads = readTurnLiveness,
     now = () => performance.now(),
     sleep = delay,
   } = {},
 ) {
+  const effectiveBoundMs = Math.min(boundMs, budgetMs);
   const startedAt = now();
-  const deadline = startedAt + boundMs;
+  const deadline = startedAt + effectiveBoundMs;
   const elapsed = () => now() - startedAt;
   let last;
   for (;;) {
     if (now() >= deadline) {
       throw new Error(
-        `${describeTurn(turn, last, dispatcherExited(), elapsed())}; the wait reached its ${boundMs} ms bound before the turn was gone`,
+        `${describeTurn(turn, last, dispatcherExited(), elapsed())}; the wait reached its ${effectiveBoundMs} ms bound before the turn was gone`,
       );
     }
     last = await reads(turn, deadline - now());
@@ -302,7 +308,7 @@ async function waitForKilledTurn(
         return last;
       }
       throw new Error(
-        `${describeTurn(turn, last, dispatcherExited(), elapsed())}; the wait passed after its ${boundMs} ms bound`,
+        `${describeTurn(turn, last, dispatcherExited(), elapsed())}; the wait passed after its ${effectiveBoundMs} ms bound`,
       );
     }
     if (finishedAt >= deadline) {
@@ -329,6 +335,7 @@ async function killedDispatch({
   startupMs = 30_000,
   reportDelayMs = 0,
   startDelayMs = 0,
+  deadline = Infinity,
 } = {}) {
   const repo = await newRealRunRepo();
   const { lockFile } = statePaths({ cwd: repo });
@@ -449,6 +456,7 @@ async function killedDispatch({
   const reads = await waitForKilledTurn(turnLiveness, {
     dispatcherExited: () => dispatcherExited,
     waitForFake: !keepChild,
+    budgetMs: Math.max(0, deadline - Date.now()),
   });
   return {
     repo,
@@ -457,14 +465,19 @@ async function killedDispatch({
     childPid: turn.pid,
     killedAt,
     diagnose: () => describeTurn(turnLiveness, reads, dispatcherExited, Date.now() - killedAt),
+    recoveryBudgetMs: () => Math.max(0, deadline - Date.now()),
   };
 }
 
 // The recovery call inherits the temporary directory that held the turn directory, as a call of the
 // same host does. A record of another parent is refused (issue #1216).
-const nextCall = (repo, tmpRoot) => {
+const nextCall = (repo, tmpRoot, signal) => {
   for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, tmpRoot);
-  return executeRoleCommand(withRepo(dispatchArgv(), repo), { ...basicDeps(), stdin: stdinPrompt });
+  return executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    ...basicDeps(),
+    stdin: stdinPrompt,
+    signal,
+  });
 };
 
 // Runs another role operation on the run in `repo`, under the temporary root of its killed
@@ -539,42 +552,64 @@ async function keptTurnDir() {
 // after its dispatch process died mid-turn removes the directory of that turn.
 // Process: this is the one real crash that proves a killed dispatch leaves its turn directory and
 // state record for the next call. Every other case writes that state in process.
-test("the call that marks a killed dispatch interrupted removes its turn directory", async () => {
-  const { repo, turnDir, tmpRoot, diagnose } = await killedDispatch();
-  // Every failure past the kill reports the pids, the liveness reads, and the time from the kill
-  // to the check (issue #2042).
-  const check = () => diagnose();
-  const withCheck = (error) => {
-    const detail = check();
-    const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof Error) {
-      if (!message.includes(detail)) error.message = `${detail}; ${message}`;
-      return error;
-    }
-    return new Error(`${detail}; ${message}`);
-  };
-  try {
-    expect(existsSync(turnDir), check()).toBe(true);
-
-    // The recovery call is awaited to completion: it writes state, so abandoning it at a timeout
-    // would let it finish after teardown. Its own read bounds are main's. The state read has no
-    // write, so it is bounded.
-    const next = await nextCall(repo, tmpRoot);
-    const stateRead = readRepoState(repo);
-    stateRead.catch(() => {});
-    const state = await within(stateRead, STATE_READ_BOUND_MS, "the state read").catch((error) => {
-      throw withCheck(error);
+test(
+  "the call that marks a killed dispatch interrupted removes its turn directory",
+  async () => {
+    const caseStartedAt = Date.now();
+    const { repo, turnDir, tmpRoot, diagnose, recoveryBudgetMs } = await killedDispatch({
+      deadline: caseStartedAt + CASE_TIMEOUT_MS - CASE_MARGIN_MS,
     });
+    // Every failure past the kill reports the pids, the liveness reads, and the time from the kill
+    // to the check (issue #2042).
+    const check = () => diagnose();
+    const withCheck = (error) => {
+      const detail = check();
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof Error) {
+        if (!message.includes(detail)) error.message = `${detail}; ${message}`;
+        return error;
+      }
+      return new Error(`${detail}; ${message}`);
+    };
+    try {
+      expect(existsSync(turnDir), check()).toBe(true);
 
-    expect(next.exitCode, check()).toBe(1);
-    expect(next.payload.error, check()).toContain("interrupted");
-    expect(state.lifecycle, check()).toBe("interrupted");
-    expect(existsSync(turnDir), check()).toBe(false);
-    expect(readdirSync(tmpRoot), check()).toEqual([]);
-  } catch (error) {
-    throw withCheck(error);
-  }
-}, 60_000);
+      // The identity read time is already spent from this budget. The recovery gets what remains,
+      // less a reserve for the state read, and the signal stops it before a late state write.
+      const recoveryBudget = recoveryBudgetMs() - STATE_READ_RESERVE_MS;
+      if (recoveryBudget <= 0) {
+        throw new Error("the recovery budget is exhausted");
+      }
+      const controller = new AbortController();
+      const budgetTimer = setTimeout(() => controller.abort(), recoveryBudget);
+      let next;
+      let state;
+      try {
+        const recovery = nextCall(repo, tmpRoot, controller.signal);
+        recovery.catch(() => {});
+        next = await within(recovery, recoveryBudget, "the recovery call");
+        const stateRead = readRepoState(repo);
+        stateRead.catch(() => {});
+        const readBudget = Math.min(STATE_READ_BOUND_MS, recoveryBudgetMs());
+        if (readBudget <= 0) {
+          throw new Error("the state-read budget is exhausted");
+        }
+        state = await within(stateRead, readBudget, "the state read");
+      } finally {
+        clearTimeout(budgetTimer);
+      }
+
+      expect(next.exitCode, check()).toBe(1);
+      expect(next.payload.error, check()).toContain("interrupted");
+      expect(state.lifecycle, check()).toBe("interrupted");
+      expect(existsSync(turnDir), check()).toBe(false);
+      expect(readdirSync(tmpRoot), check()).toEqual([]);
+    } catch (error) {
+      throw withCheck(error);
+    }
+  },
+  CASE_TIMEOUT_MS,
+);
 
 // The wait cases below drive `waitForKilledTurn`, the function the killed-dispatch case runs, with
 // an injected read source and clock. No process is started.
@@ -624,9 +659,10 @@ test("the dead-turn wait resolves when the lock rule reads every recorded pid go
 });
 
 // Usefulness: verifies issue #2042 blockers 2 and 3, that the wait reports the pids, the liveness
-// reads, and the elapsed time at its bound, and starts no read after it. Not redundant: no other
-// case drives the deadline or the failure text of the wait the case runs.
-test("the dead-turn wait reports a held lock and starts no read after its bound", async () => {
+// reads, the identity read time, and the elapsed time at its bound, and starts no read after it.
+// The case passes the budget left after the identity read, so the wait uses the smaller of main's
+// 5 s and that budget. Not redundant: no other case drives the shared budget or the failure text.
+test("the dead-turn wait spends the budget left after the identity read", async () => {
   let clock = 0;
   let calls = 0;
   const reads = async () => {
@@ -636,7 +672,7 @@ test("the dead-turn wait reports a held lock and starts no read after its bound"
 
   const failure = await waitForKilledTurn(waitTurn, {
     dispatcherExited: () => true,
-    boundMs: 100,
+    budgetMs: 60,
     pollMs: 100,
     reads,
     now: () => clock,
@@ -649,7 +685,7 @@ test("the dead-turn wait reports a held lock and starts no read after its bound"
   expect(failure.message).toContain("state lock owner pid 1234");
   expect(failure.message).toContain("alive");
   expect(failure.message).toContain("identity read 12 ms");
-  expect(failure.message).toContain("100 ms after the kill");
+  expect(failure.message).toContain("60 ms after the kill");
   expect(calls).toBe(1);
 });
 
