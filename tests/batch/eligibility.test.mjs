@@ -639,3 +639,30 @@ test("a default-base entry with a non-string body fails closed", async () => {
   ]);
   await expect(readOpenPrClosures({ gh, repo: "C:\\repo" })).rejects.toThrow();
 });
+
+// Usefulness: issue #2049 review — eligibility keeps main's rule: a closing reference excludes the
+// issue by its number, whatever repository it names. Not redundant: it names the foreign
+// same-number exclusion that the delivery check must not mirror.
+test("a foreign same-number closing reference still closes the issue for eligibility", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh([
+      {
+        number: 15,
+        headRefName: "a",
+        closingIssuesReferences: [{ number: 9, repository: { nameWithOwner: "other/repo" } }],
+        baseRefName: "main",
+        body: "",
+      },
+    ]),
+    repo: "C:/repo",
+  });
+  expect([...closures.closed]).toEqual([9]);
+  const result = await checkEligibility({
+    issue: 9,
+    gh: issueReply("OPEN"),
+    repo: "C:/repo",
+    claim: { exists: false },
+    openPrClosures: closures,
+  });
+  expect(result).toMatchObject({ ok: false, reason: "closed-by-open-pr" });
+});

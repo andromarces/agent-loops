@@ -106,7 +106,11 @@ export async function readBatchStatus({ runsRoot, id }) {
     overlapIncomplete: manifest.overlapIncomplete ?? [],
     completion: {
       status: manifest.status,
-      complete: ["completed", "failed"].includes(manifest.status),
+      // A partial loop means the batch reached an end state without delivering every item, so it
+      // never reads as complete (adr/0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md).
+      complete:
+        ["completed", "failed"].includes(manifest.status) &&
+        !loops.some((loop) => loop.partial === true),
     },
     loops,
   };
