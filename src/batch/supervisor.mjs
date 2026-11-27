@@ -19,9 +19,13 @@ import { removeEmptyDirectory } from "./audit-store.mjs";
 import { cleanupLoop } from "./cleanup.mjs";
 import { readGhJson } from "./gh-read.mjs";
 import { createOwnerDecisions, readAnswer, readDecision } from "./decisions.mjs";
-import { preflightItemEligibility } from "./eligibility.mjs";
+import {
+  preflightItemEligibility,
+  readPullRequestClosingNumbers,
+  readRepositoryIdentity,
+} from "./eligibility.mjs";
 import { loopSegment, preparedItems } from "./items.mjs";
-import { loopEntry, progress, queuedLoop } from "./loop-records.mjs";
+import { isIssueLoop, loopEntry, progress, queuedLoop } from "./loop-records.mjs";
 import { overlapReportOf } from "./overlap.mjs";
 import { notify as defaultNotify } from "./notifier.mjs";
 import {
@@ -140,6 +144,43 @@ function isLive(loop) {
 async function ownerStillLive(loop, cache) {
   if (!isLive(loop)) return false;
   return ownerAlive({ pid: loop.pid, startTime: loop.startTime }, cache);
+}
+
+/**
+ * Whether one issue's pull request closes it, or null when the closing evidence cannot be read.
+ * The evidence is the same set that the eligibility check reads: closing references, body keywords
+ * on a non-default base, and commit messages. An unreadable read logs one warning and never fails
+ * the batch (adr/0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md).
+ * @returns {Promise<boolean | null>}
+ */
+async function pullRequestClosesIssue({ gh, repo, issue, pr, repository }) {
+  try {
+    const { closed, unreadable, incomplete } = await readPullRequestClosingNumbers({
+      gh,
+      repo,
+      number: pr,
+      repository: await repository(),
+    });
+    if (closed.has(issue)) return true;
+    if (unreadable.has(issue)) {
+      logWarn(
+        `issue ${issue}: the closing-reference read of pull request ${pr} names issue ${issue} with no readable repository`,
+      );
+      return null;
+    }
+    if (incomplete) {
+      logWarn(
+        `issue ${issue}: the closing-reference read of pull request ${pr} reached the 250-commit page`,
+      );
+      return null;
+    }
+    return false;
+  } catch (err) {
+    logWarn(
+      `issue ${issue}: the closing-reference read of pull request ${pr} failed: ${err?.message ?? err}`,
+    );
+    return null;
+  }
 }
 
 /**
@@ -320,6 +361,19 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
   // The default work-tree root of a batch, derived from the manifest so a resume names it too.
   const defaultWorkTreeRoot = () =>
     join(dirname(manifest.repo), `${basename(manifest.repo)}-batch-${manifest.id}`);
+
+  // One repository identity read per command, shared by the delivery checks. A failed read is not
+  // cached, so the next succeeded loop tries again.
+  let repositoryRead = null;
+  const repositoryIdentity = () => {
+    if (repositoryRead === null) {
+      repositoryRead = readRepositoryIdentity({ gh, repo: manifest.repo }).catch((err) => {
+        repositoryRead = null;
+        throw err;
+      });
+    }
+    return repositoryRead;
+  };
 
   // Removes the batch root only when the batch ran on the default root and it is empty. The
   // recorded path and the derived default are compared as text, without resolving a link: a
@@ -833,6 +887,27 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     { stepsUsed, remainingSteps, pr, prUndeclared, transcript },
   ) => {
     const recordedPr = pr ?? loop.pr;
+    // The success checkpoint carries its report and the closing fact in one write, so the partial
+    // marker never depends on a later read
+    // (adr/0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md). The delivery check reads
+    // only the final attempt's pull request, never a value that an earlier attempt stored.
+    const options = { attempts: loop.attempts, reviewOnly: loop.mode === "review-only" };
+    const report =
+      transcript === undefined
+        ? await readLoopReport(loop.transcript, options)
+        : loopReportFromRead(transcript, options);
+    const finalPr = pr ?? prUndeclared ?? null;
+    const closesIssue = isIssueLoop(loop)
+      ? finalPr === null
+        ? null
+        : await pullRequestClosesIssue({
+            gh,
+            repo: manifest.repo,
+            issue,
+            pr: finalPr,
+            repository: repositoryIdentity,
+          })
+      : undefined;
     await changeLoop(
       issue,
       {
@@ -845,6 +920,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         prUndeclared: recordedPr == null ? recordedUndeclared(prUndeclared, loop) : null,
         pid: null,
         startTime: null,
+        report,
+        ...(closesIssue === undefined ? {} : { pullRequestClosesIssue: closesIssue }),
       },
       { transcript },
     );
@@ -956,7 +1033,13 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     const stepsUsed = steps.ok ? steps.steps : loop.stepsUsed;
     const remainingSteps = Math.max(0, prepared.maxSteps - stepsUsed);
     if (recordedExit.ok && recordedExit.proven && recordedExit.exitCode === 0) {
-      await finishSuccess(issue, loop, { stepsUsed, remainingSteps, pr: loop.pr, transcript });
+      await finishSuccess(issue, loop, {
+        stepsUsed,
+        remainingSteps,
+        pr: declared.declaredPr,
+        prUndeclared: declared.prUndeclared,
+        transcript,
+      });
       return;
     }
     if (
@@ -1022,7 +1105,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
       await finishSuccess(issue, loop, {
         stepsUsed,
         remainingSteps,
-        pr: decision.pr ?? loop.pr,
+        pr: decision.pr ?? declared.declaredPr,
+        prUndeclared: decision.pr == null ? declared.prUndeclared : null,
         transcript,
       });
       return;
