@@ -116,6 +116,7 @@ and a pull request can change more, so a single reply cannot prove a complete li
 - [Implementation: changed-file groups](../src/batch/overlap.mjs)
 - [Implementation: batch finalization](../src/batch/supervisor.mjs)
 - [Implementation: batch status](../src/batch/status.mjs)
+- [Implementation: repository identity resolver](../src/lib/worker-pr.mjs)
 - [Tests: changed-file groups](../tests/batch/overlap.test.mjs)
 - [Tests: batch outcomes](../tests/batch/supervisor.outcomes.test.mjs)
 - [ADR Index](README.md)
