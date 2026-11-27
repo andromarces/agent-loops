@@ -131,8 +131,9 @@ its value.
 
 A `*` line that is not the dropped shape above either is a list and blanks the block, for example
 `*item`, `* item`, or `*file*.mjs`, or is not a list and drops as prose under a `Label:` line, for
-example `**bold** note`, with the same refusals. A lone heading takes such a non-list line in its
-value run as its value.
+example `**bold** note`, with the same refusals. Under a `Label:` line, a whole-line bold heading,
+such as `**Reviewer notes.**`, can fold as a prose lead instead. A lone heading takes such a
+non-list line in its value run as its value.
 
 A table pair is a line with a `|` and a delimiter row directly below it. A Markdown table in the block makes it unparseable: put tabular data in `- ` items, one row per item.
 
