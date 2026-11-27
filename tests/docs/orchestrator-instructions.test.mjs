@@ -9,6 +9,7 @@ import { initialPrompt } from "../../src/prompts/orchestrator.mjs";
 import {
   expectRule,
   expectReviewerGateRule,
+  clauses,
   COMPARE_BEFORE_FINISH,
   RESOLVE_PR_HEAD,
   REQUIRE_CLEAN_TRUE,
@@ -374,34 +375,38 @@ test("the runtime advisory docs name the literal roots of the report", async () 
   );
 });
 
-// Usefulness: verifies issue #2040: the OpenCode pty daemon folder under `literal-tmp/` is an
-// expected tool entry on an OpenCode turn with no finish item on every surface that states the
-// parent rule, while every other unattributed `literal-tmp/` name still goes under `notes`
-// (ADR 0108, ADR 0175).
-test("the parent surfaces treat the OpenCode pty folder as an expected literal-tmp entry", async () => {
-  const instructions = (await readInstructions()).replace(/\s+/g, " ");
-  const prompt = initialPrompt({ task: "Implement feature X", maxSteps: 10 }).replace(/\s+/g, " ");
-  const fields = await readSectionText("runtime-advisory-fields.md");
-  for (const text of [instructions, prompt, fields]) {
-    expectRule(
-      text,
-      /literal-tmp\/opencode-pty-<uid>/i,
-      /turn whose CLI is OpenCode/i,
-      /expected tool entry/i,
-      /no `notes` item/i,
-      /no `open` item/i,
-    );
-  }
-  for (const text of [instructions, prompt]) {
-    expectRule(
-      text,
-      /unattributed name/i,
-      /literal-tmp\//i,
-      /under `notes`/i,
-      /by name/i,
-      /never under `open`/i,
-    );
-  }
+// Asserts one parent copy states a rule on its own, so reverting that file fails here even when
+// another copy still states it.
+function expectRuleInCopy(name, text, ...terms) {
+  const stated = clauses(text.replace(/\s+/g, " ")).some((clause) =>
+    terms.every((term) => term.test(clause)),
+  );
+  expect(stated, `${name} does not state ${terms.map(String).join(" ")}`).toBe(true);
+}
+
+// Usefulness: verifies issue #2040: every parent copy alone names the OpenCode pty daemon folder as
+// an expected `literal-tmp/` entry with a numeric user id on any turn, and adds no finish item for
+// it (ADR 0108, ADR 0175). Each copy is read alone, so a copy that loses the rule fails here. The
+// existing `notes` rule for other names stays covered by the shared parent rules above.
+test("each parent copy treats the OpenCode pty folder as an expected literal-tmp entry", async () => {
+  const rules = [
+    /literal-tmp\/opencode-pty-<uid>/i,
+    /numeric user id/i,
+    /expected tool entry/i,
+    /any turn/i,
+    /no `notes` item/i,
+    /no `open` item/i,
+  ];
+  const copies = [
+    ["docs/orchestrator-instructions.md", await readFile(instructionsPath, "utf8")],
+    [
+      "docs/orchestrator/runtime-advisory-fields.md",
+      await readSectionText("runtime-advisory-fields.md"),
+    ],
+    ["docs/reference/role.md", await readFile(join(repoRoot, "docs/reference/role.md"), "utf8")],
+    ["src/prompts/orchestrator.mjs", initialPrompt({ task: "Implement feature X", maxSteps: 10 })],
+  ];
+  for (const [name, text] of copies) expectRuleInCopy(name, text, ...rules);
 });
 
 // Usefulness: verifies the interactive instructions and the headless prompt state the same

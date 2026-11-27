@@ -34,9 +34,9 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
     and the field names it after the turn. The entry is unattributed like every other entry: the
     parent names it to the user and deletes nothing. Another process can hold the same name.
     A turn that reports its own leftover makes it actionable.
-  - A `literal-tmp/opencode-pty-<uid>` name on a turn whose CLI is OpenCode is the runtime
-    folder of the OpenCode pty daemon, an expected tool entry: the parent adds no `notes` item and
-    no `open` item for it.
+  - A `literal-tmp/opencode-pty-<uid>` name, where `<uid>` is a numeric user id, is the
+    OpenCode pty daemon's runtime folder, an expected tool entry on any turn: the parent adds no
+    `notes` item and no `open` item for it.
   - An entry that a turn explicitly reports as its own leftover stays actionable: report it under
     `open` and name the turn report. A runtime cleanup failure stays actionable: `removeTurnTmpdir`
     warns with the directory that it did not remove and says to delete it by hand. The runtime adds
