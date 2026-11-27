@@ -9,8 +9,8 @@ const failure = { status: 1, stdout: "", stderr: "no such pull request" };
 /**
  * A gh double for the repository read, the changed-file count, the head reads, and the paged file
  * list of a pull request. `fail` refuses a number, `mismatch` reports one changed file more than
- * the list, `afterHeads` moves a head before the closing read, `repoFailure` fails the
- * repository read, and `url` is the repository URL that read names.
+ * the list, `afterHeads` and `afterBases` move a revision before the closing read,
+ * `repoFailure` fails the repository read, and `url` is the repository URL that read names.
  */
 function ghWith(
   files,
@@ -19,12 +19,15 @@ function ghWith(
     mismatch = new Set(),
     heads = new Map(),
     afterHeads = new Map(),
+    bases = new Map(),
+    afterBases = new Map(),
     repoFailure = false,
     url = "https://github.com/o/r",
   } = {},
 ) {
   const calls = [];
   const headOf = (pr) => heads.get(pr) ?? `head-${pr}`;
+  const baseOf = (pr) => bases.get(pr) ?? `base-${pr}`;
   const gh = async (args) => {
     calls.push(args.join(" "));
     if (
@@ -43,11 +46,18 @@ function ghWith(
       const pr = Number(args[2]);
       if (fail.has(pr)) return failure;
       const count = (files.get(pr) ?? []).length + (mismatch.has(pr) ? 1 : 0);
-      return json({ changedFiles: count, headRefOid: headOf(pr) });
+      return json({ changedFiles: count, headRefOid: headOf(pr), baseRefOid: baseOf(pr) });
     }
-    if (args[0] === "pr" && args[1] === "view" && args.includes("headRefOid")) {
+    if (
+      args[0] === "pr" &&
+      args[1] === "view" &&
+      args.some((arg) => arg.startsWith("headRefOid"))
+    ) {
       const pr = Number(args[2]);
-      return json({ headRefOid: afterHeads.get(pr) ?? headOf(pr) });
+      return json({
+        headRefOid: afterHeads.get(pr) ?? headOf(pr),
+        baseRefOid: afterBases.get(pr) ?? baseOf(pr),
+      });
     }
     const page = /\/pulls\/(\d+)\/files\?per_page=100&page=(\d+)$/.exec(args[1] ?? "");
     if (args[0] === "api" && page !== null && args[2] === "--include") {
@@ -295,4 +305,28 @@ test("a failed repository read names every pull request it marks incomplete", as
   expect(warnings).toHaveLength(2);
   expect(warnings[0]).toContain("11");
   expect(warnings[1]).toContain("12");
+});
+
+// Usefulness: a base that moves between the changed-file count and the end of the paged read makes
+// the list incomplete, because a merged stacked dependency can change the files with the head and
+// count unchanged.
+test("a base that moves during the read is incomplete", async () => {
+  const { gh } = ghWith(
+    new Map([
+      [11, filesAt(150, "src/shared.mjs", 120, "left")],
+      [12, filesAt(150, "src/shared.mjs", 120, "right")],
+    ]),
+    { afterBases: new Map([[11, "moved-base"]]) },
+  );
+  const warnings = [];
+  const report = await overlapReportOf({
+    loops: [loop(11), loop(12)],
+    gh,
+    repo: "/repo",
+    warn: (message) => warnings.push(message),
+  });
+  expect(report).toEqual({ groups: [], incomplete: [11] });
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("11");
+  expect(warnings[0]).toContain("incomplete");
 });

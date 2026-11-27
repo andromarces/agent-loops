@@ -32,14 +32,18 @@ and a pull request can change more, so a single reply cannot prove a complete li
    `repos/{owner}/{repo}/pulls/<n>/files`, read through the shared paged reader. Every such read
    names the repository host with `--hostname`, taken from the repository URL through the shared
    repository-identity resolver, so it goes to the same host as the pull request metadata and not
-   to the gh default host. The list must hold exactly the changed-file count of that pull request,
-   read from `gh pr view <n> --json changedFiles,headRefOid`. The head is read again after the
-   list, so a push between pages cannot pass as one list. At most four pull requests are read at
-   once, through the existing batched map helper.
-3. The list is incomplete when a read fails, the head changes between the two reads, its length
-   differs from the changed-file count, it reaches the 3000-file API cap, it repeats a path, or an
-   entry names no path. The 3000-file cap is the API limit, so a list at the cap cannot prove that
-   no file is missing. A repeated path is the mark of a page from another revision.
+   to the gh default host. The pager judges every `Link` target against that same request host,
+   because the batch passes it as the paged read's request host; every other host stays refused,
+   and a caller that names no request host keeps the gh default host rule. The list must hold
+   exactly the changed-file count of that pull request, read from
+   `gh pr view <n> --json changedFiles,headRefOid,baseRefOid`. The head and the base are read again
+   after the list, so a push or a base change between pages cannot pass as one list. At most four
+   pull requests are read at once, through the existing batched map helper.
+3. The list is incomplete when a read fails, the head or the base changes between the two reads,
+   its length differs from the changed-file count, it reaches the 3000-file API cap, it repeats a
+   path, or an entry names no path. The 3000-file cap is the API limit, so a list at the cap cannot
+   prove that no file is missing. A repeated path or a moved base is the mark of a page from
+   another revision.
 4. Each group holds the pull requests that share at least one path, in `pulls`, and the paths that
    at least two members change, in `paths`. A chain of shared paths, such as one pull request that
    shares a path with each of two others, joins one group.
@@ -56,11 +60,13 @@ and a pull request can change more, so a single reply cannot prove a complete li
    it marks incomplete. A read never fails the batch, never changes another loop status, and never
    changes the exit code.
 8. The overlaps are read before the batch is recorded `completed` or `failed`. A stop during the
-   read keeps the interrupted result: the batch records `interrupted`, sends no completion
-   notification, exits 130, and stores no overlap. The next `batch resume` computes the report.
-   The finalization write is a read-modify-write under the batch lock, and it never replaces a
-   batch that another process recorded `completed` or `failed`, so a cancel of the original
-   command cannot undo a completion that already stored its report.
+   read keeps the interrupted result: the batch records `interrupted` when no terminal status is
+   stored, sends no completion notification, and stores no overlap. It exits 130 whatever another
+   process stored, as main does for an interrupt. The next `batch resume` computes the report when
+   none is stored. The finalization write is a read-modify-write under the batch lock. Under that
+   lock, a finalizer saves the overlap report only when none is stored, and never replaces a
+   stored report, a failed or slower read included. It also never moves a batch that another
+   process recorded `completed` or `failed`.
 9. A resume of a batch that was already `completed` or `failed` when it started keeps the stored
    fields and reads no pull request. A write happens only when a stored field changes.
 10. The report changes no other batch behavior. The completion write, the completion notification,
@@ -74,18 +80,19 @@ and a pull request can change more, so a single reply cannot prove a complete li
 - A pull request with more than 100 changed files still reports an overlap that sits on a later
   page, and a list the read cannot prove complete is named in `overlapIncomplete` instead of
   reading as no overlap.
-- A REST file-list read goes to the repository host, so an enterprise repository is read from the
+- A REST file-list read goes to the repository host, and its `Link` targets are judged against
+  that host, so an enterprise repository with GitHub.com and Enterprise logins is read from the
   same host as its pull request metadata.
-- A push that lands between two pages is reported as an incomplete list, never as one list that
-  hides a shared path.
+- A push or a base change that lands between two pages is reported as an incomplete list, never as
+  one list that hides a shared path.
 - An unreadable or truncated file list costs one warning and removes one pull request from the
   groups, so a GitHub read failure cannot fail work that already succeeded.
 - A completed batch makes at most one changed-file count read and one paged file-list read per
   succeeded pull request, and a resume of an ended batch makes none.
-- A stop during the overlap read ends the batch as interrupted, and the resume reports the overlap,
-  so no completed batch lacks its report.
-- A cancel of the original command leaves a batch that another process already completed in place,
-  with that process's report.
+- A stop during the overlap read ends the batch as interrupted, and the resume reports the overlap
+  when none is stored, so no completed batch lacks its report.
+- A cancel of the original command exits 130 and leaves a batch that another process already
+  completed in place, with that process's report.
 - The groups are a report only, so no merge, test, or branch state depends on them.
 
 ## Alternatives

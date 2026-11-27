@@ -96,14 +96,25 @@ export function fakeGh({
       const count = (files.get(number) ?? []).length + (mismatchedFiles.has(number) ? 1 : 0);
       return {
         status: 0,
-        stdout: JSON.stringify({ changedFiles: count, headRefOid: `head-${number}` }),
+        stdout: JSON.stringify({
+          changedFiles: count,
+          headRefOid: `head-${number}`,
+          baseRefOid: `base-${number}`,
+        }),
         stderr: "",
       };
     }
-    if (args[0] === "pr" && args[1] === "view" && args.includes("headRefOid")) {
+    if (
+      args[0] === "pr" &&
+      args[1] === "view" &&
+      args.some((arg) => arg.startsWith("headRefOid"))
+    ) {
       return {
         status: 0,
-        stdout: JSON.stringify({ headRefOid: `head-${Number(args[2])}` }),
+        stdout: JSON.stringify({
+          headRefOid: `head-${Number(args[2])}`,
+          baseRefOid: `base-${Number(args[2])}`,
+        }),
         stderr: "",
       };
     }

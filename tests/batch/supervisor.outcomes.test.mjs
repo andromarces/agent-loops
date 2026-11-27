@@ -464,7 +464,7 @@ test("a stop during the overlap read keeps the interrupt result and the resume r
 });
 
 // Usefulness: a cancel of the original command after another resume completed the batch leaves the
-// completed manifest and its stored report in place, so a finalizer never moves a completed batch.
+// completed manifest and its stored failed-read report in place, and still exits 130.
 test("a cancel never moves a batch another process completed", async () => {
   const prepared = await waitPrepared([1, 2]);
   const runsRoot = join(prepared.workTreeRoot, "runs");
@@ -487,7 +487,6 @@ test("a cancel never moves a batch another process completed", async () => {
     return inner(args, cwd);
   };
   const controller = new AbortController();
-  const recorded = [{ pulls: [11, 12], paths: ["src/handler.mjs"] }];
   try {
     const run = runBatch({
       prepared,
@@ -505,17 +504,88 @@ test("a cancel never moves a batch another process completed", async () => {
     await updateManifest(runsRoot, prepared.id, (value) => ({
       ...value,
       status: "completed",
-      overlapGroups: recorded,
-      overlapIncomplete: [],
+      overlapGroups: [],
+      overlapIncomplete: [11, 12],
     }));
     controller.abort();
     gate.resolve();
-    const { summary } = await run;
+    const { exitCode, summary } = await run;
+    expect(exitCode).toBe(130);
     const manifest = await readManifest(runsRoot, prepared.id);
     expect(manifest.status).toBe("completed");
-    expect(manifest.overlapGroups).toEqual(recorded);
+    expect(manifest.overlapGroups).toEqual([]);
+    expect(manifest.overlapIncomplete).toEqual([11, 12]);
     expect(summary.status).toBe("completed");
-    expect(summary.overlapGroups).toEqual(recorded);
+    expect(summary.overlapGroups).toEqual([]);
+    expect(summary.overlapIncomplete).toEqual([11, 12]);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a resume keeps a stored failed-read report, so a later successful read never replaces
+// a report that another process already saved.
+test("a resume keeps a stored failed-read report", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const files = new Map([
+    [11, ["src/handler.mjs"]],
+    [12, ["src/handler.mjs"]],
+  ]);
+  const inner = fakeGh({ files });
+  const reached = deferred();
+  const gate = deferred();
+  const blockedGh = async (args, cwd) => {
+    if (args[0] === "api" && typeof args[1] === "string" && args[1].includes("/pulls/11/files")) {
+      reached.resolve();
+      await gate.promise;
+    }
+    return inner(args, cwd);
+  };
+  const controller = new AbortController();
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: blockedGh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await reached.promise;
+    controller.abort();
+    gate.resolve();
+    await run;
+    await updateManifest(runsRoot, prepared.id, (value) => ({
+      ...value,
+      overlapGroups: [],
+      overlapIncomplete: [11, 12],
+    }));
+    const resumed = await runBatch({
+      prepared: { ...prepared, resume: true },
+      runsRoot,
+      gh: fakeGh({ files }),
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn: childDouble().spawn,
+        installSignal: false,
+      },
+    });
+    expect(resumed.summary.status).toBe("completed");
+    expect(resumed.summary.overlapGroups).toEqual([]);
+    expect(resumed.summary.overlapIncomplete).toEqual([11, 12]);
+    const manifest = await readManifest(runsRoot, prepared.id);
+    expect(manifest.overlapGroups).toEqual([]);
+    expect(manifest.overlapIncomplete).toEqual([11, 12]);
   } finally {
     await cleanupRepo();
   }

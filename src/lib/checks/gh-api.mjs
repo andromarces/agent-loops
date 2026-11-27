@@ -341,10 +341,19 @@ function defaultHost(reply) {
   return configured.length === 1 ? configured[0] : "github.com";
 }
 
+/** The hosts of one request host: the host itself and the host that serves its API. */
+function hostsOf(host) {
+  if (host === "github.com") {
+    return new Set([host, "api.github.com"]);
+  }
+  return new Set(host.endsWith(".ghe.com") ? [host, `api.${host}`] : [host]);
+}
+
 // The hosts that a request of `gh api` goes to: the host from `GH_HOST`, else the default host of
 // `gh` (see `defaultHost`), and the host that serves its API. A host that only starts like one of
 // these is another host. The set is empty when no host is stated, so every target then counts as
-// another host.
+// another host. A caller that sends its request to another host seeds the pager with that host
+// (see `pagedRead`), so the reply is judged by the host that the request goes to.
 async function requestHosts(read, cwd) {
   let host = (process.env.GH_HOST ?? "").trim().toLowerCase();
   if (host === "") {
@@ -358,10 +367,7 @@ async function requestHosts(read, cwd) {
       return new Set();
     }
   }
-  if (host === "github.com") {
-    return new Set([host, "api.github.com"]);
-  }
-  return new Set(host.endsWith(".ghe.com") ? [host, `api.${host}`] : [host]);
+  return hostsOf(host);
 }
 
 /** The targets of the `Link` headers in `headers`. */
@@ -483,7 +489,7 @@ async function readReply(read, args, cwd, state) {
   // Both forms carry `targets`, so a caller does not parse the headers again.
   const targets = reply === null ? [] : linkTargets(reply.headers);
   if (targets.length > 0) {
-    state.hosts ??= await requestHosts(read, cwd);
+    state.hosts ??= await requestHosts(read, args, cwd);
   }
   const foreign = targets.length > 0 ? foreignTarget(targets, state.hosts) : null;
   if (foreign !== null) {
@@ -545,15 +551,17 @@ async function readReply(read, args, cwd, state) {
  * @param {string} endpoint
  * @param {string} cwd
  * @param {string | null} field
+ * @param {string | null} requestHost the host that each request goes to, or null for the default
  */
-async function readPages(read, endpoint, cwd, field) {
+async function readPages(read, endpoint, cwd, field, requestHost = null) {
   // `endpoint` carries no query.
   // Each request uses the documented page number, never the `Link` header, so no request goes to
   // a target that a reply named. An empty page is kept, so a classifier sees the whole sequence.
+  // A request host seeds the `Link` check with the host that the request goes to.
   const pages = [];
   let collected = 0;
   let expected;
-  const state = {};
+  const state = requestHost === null ? {} : { hosts: hostsOf(requestHost) };
   for (let page = 1; page <= MAX_PAGES; page += 1) {
     const { end, json } = await readReply(
       read,
@@ -598,18 +606,22 @@ async function readPages(read, endpoint, cwd, field) {
 
 /**
  * A `gh` runner whose `api <endpoint>` call reads every page of `endpoint` through `readPages`.
- * A caller of `ghApi` or `readRequiredSource` then never uses `gh --paginate`.
+ * A caller of `ghApi` or `readRequiredSource` then never uses `gh --paginate`. `requestHost` is
+ * the host that the caller's `gh` sends each request to, when it is not the host of `GH_HOST` or
+ * the default host of `gh`; the `Link` check then judges a target against that host.
  * @param {Function} gh
  * @param {string | null} field see `readPages`
+ * @param {string | null} requestHost the host that each request goes to, or null for the default
  */
 export const pagedRead =
-  (gh, field = null) =>
+  (gh, field = null, requestHost = null) =>
   (args, cwd, options) =>
     readPages(
       (pageArgs, pageCwd, extra) => gh(pageArgs, pageCwd, { ...options, ...extra }),
       args[1],
       cwd,
       field,
+      requestHost,
     );
 
 /**

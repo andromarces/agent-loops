@@ -36,36 +36,45 @@ function apiRunner(gh, host) {
 
 /**
  * Every changed path of one pull request, read from the paginated REST file list and checked
- * against the changed-file count. The head is read before and after the list, so a push between
- * pages cannot pass as one list. Throws a message that names the missing proof: a failed read, a
- * head that moved, a list shorter or longer than the count, a list at the API cap, a repeated
- * path, or an entry of another shape.
+ * against the changed-file count. The head and the base are read before and after the list, so a
+ * push or a base change between pages cannot pass as one list. Throws a message that names the
+ * missing proof: a failed read, a head or base that moved, a list shorter or longer than the count,
+ * a list at the API cap, a repeated path, or an entry of another shape.
  */
 async function completePathsOf(gh, repo, { slug, host }, pr) {
   const view = await readGhJson(
     gh,
-    ["pr", "view", String(pr), "--json", "changedFiles,headRefOid"],
+    ["pr", "view", String(pr), "--json", "changedFiles,headRefOid,baseRefOid"],
     repo,
   );
   if (
     !isJsonObject(view) ||
     !Number.isInteger(view.changedFiles) ||
     view.changedFiles < 0 ||
-    typeof view.headRefOid !== "string"
+    typeof view.headRefOid !== "string" ||
+    typeof view.baseRefOid !== "string"
   ) {
-    throw new Error("the changed-file count or the head is unreadable");
+    throw new Error("the changed-file count, the head, or the base is unreadable");
   }
   const pages = await ghApi(
-    pagedRead(apiRunner(gh, host), null),
+    pagedRead(apiRunner(gh, host), null, host),
     [`repos/${slug}/pulls/${pr}/files`],
     repo,
   );
   if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
     throw new Error("the read named no page list");
   }
-  const after = await readGhJson(gh, ["pr", "view", String(pr), "--json", "headRefOid"], repo);
-  if (!isJsonObject(after) || after.headRefOid !== view.headRefOid) {
-    throw new Error("the pull request head changed during the read");
+  const after = await readGhJson(
+    gh,
+    ["pr", "view", String(pr), "--json", "headRefOid,baseRefOid"],
+    repo,
+  );
+  if (
+    !isJsonObject(after) ||
+    after.headRefOid !== view.headRefOid ||
+    after.baseRefOid !== view.baseRefOid
+  ) {
+    throw new Error("the pull request head or base changed during the read");
   }
   const entries = pages.flat();
   if (entries.length >= PR_FILES_CAP) {

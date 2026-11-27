@@ -365,25 +365,29 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     // and its exit 130, and the next resume computes the report. A failed or incomplete file-list
     // read logs a warning and never fails the batch. A resume of a batch that had already ended
     // keeps the stored report.
+    let cancelled = interrupted;
     let overlap = null;
     if ((status === "completed" || status === "failed") && !terminalAtStart) {
       overlap = await overlapReportOf({ loops: [...loops.values()], gh, repo: manifest.repo });
       if (interrupted) {
+        cancelled = true;
         status = "interrupted";
         overlap = null;
       }
     }
     const updated = await updateManifestReturning(runsRoot, id, (value) => {
       // A finalizer never moves a batch that another process recorded terminal, so a cancel of
-      // this command cannot undo a completion that already stored its report. The check runs
-      // under the batch lock, on the value the write would replace.
+      // this command cannot undo a completion that already stored its report. The checks run under
+      // the batch lock, on the value the write would replace.
       const recorded = value.status === "completed" || value.status === "failed";
       if (recorded && value.status !== status) return undefined;
+      // Only the first finalizer saves a report. A stored report, a failed or slower read included,
+      // is never replaced.
       return {
         ...value,
         status,
         ...(pausedReason === null ? {} : { pauseReason: pausedReason }),
-        ...(overlap === null
+        ...(overlap === null || value.overlapGroups !== undefined
           ? {}
           : { overlapGroups: overlap.groups, overlapIncomplete: overlap.incomplete }),
       };
@@ -411,7 +415,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     // already ran or never applied, and a resume must change no file system state.
     if (complete && !terminalAtStart) await removeDefaultWorkTreeRoot();
     return {
-      exitCode: exitCodeOf(manifest, loops),
+      // A cancel keeps main's interrupt result, whatever another process stored.
+      exitCode: cancelled ? 130 : exitCodeOf(manifest, loops),
       summary: summaryOf(
         manifest,
         loops,

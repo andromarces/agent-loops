@@ -6,6 +6,7 @@ import {
   ghReadError,
   isCleanServerError,
   isTransportFailure,
+  pagedRead,
   readPrList,
 } from "../../../src/lib/checks/gh-api.mjs";
 import { boundedRunner } from "../../../src/lib/checks/bounded-call.mjs";
@@ -180,5 +181,70 @@ describe("a successful reply that is not JSON", () => {
     const list = readPrList(read, ["pr", "list"], () => true);
     await expect(list).rejects.toBeInstanceOf(SyntaxError);
     await expect(list).rejects.toThrow(/gh pr list returned invalid JSON/);
+  });
+});
+
+describe("paged read host", () => {
+  const files = (count, from = 0) =>
+    Array.from({ length: count }, (_, index) => ({ filename: `f${from + index}.mjs` }));
+
+  /** One page reply, with a \`Link\` header on the host \`linkHost\` when it is given. */
+  const pageReply = (items, linkHost = null) => ({
+    status: 0,
+    stdout: `HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n${
+      linkHost === null
+        ? ""
+        : `Link: <https://${linkHost}/api/v3/repos/o/r/pulls/1/files?per_page=100&page=2>; rel="next"\r\n`
+    }\r\n${JSON.stringify(items)}`,
+    stderr: "",
+  });
+
+  /**
+   * A gh double that appends \`--hostname ghe.example.com\` to every api call, serves two pages, and
+   * answers the auth lookup that the current pager makes for its default host.
+   */
+  function hostGh(linkHost) {
+    const calls = [];
+    const gh = async (args) => {
+      calls.push(args.join(" "));
+      if (args[0] === "auth") {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            hosts: { "github.com": [{ host: "github.com", tokenSource: "hosts.yml" }] },
+          }),
+          stderr: "",
+        };
+      }
+      const page = Number(/page=(\d+)$/.exec(args[1] ?? "")?.[1]);
+      return page === 1 ? pageReply(files(100), linkHost) : pageReply(files(1, 100));
+    };
+    const api = (args, cwd, options) =>
+      args[0] === "api"
+        ? gh([...args, "--hostname", "ghe.example.com"], cwd, options)
+        : gh(args, cwd, options);
+    return { api, calls };
+  }
+
+  // Usefulness: a page read sent to an enterprise host accepts a Link target on that host, so a pull
+  // request with more than 100 files is not refused by the gh default host.
+  it("accepts a Link target on the host named by --hostname", async () => {
+    const { api, calls } = hostGh("ghe.example.com");
+    const pages = await ghApi(
+      pagedRead(api, null, "ghe.example.com"),
+      ["repos/o/r/pulls/1/files"],
+      "/repo",
+    );
+    expect(pages.flat()).toHaveLength(101);
+    expect(calls.some((call) => call.startsWith("auth "))).toBe(false);
+  });
+
+  // Usefulness: every other host is still refused when the request names its host, so a steered page
+  // never widens the accepted hosts.
+  it("refuses a Link target on another host when --hostname names one", async () => {
+    const { api } = hostGh("other.example");
+    await expect(
+      ghApi(pagedRead(api, null, "ghe.example.com"), ["repos/o/r/pulls/1/files"], "/repo"),
+    ).rejects.toThrow(/Link/);
   });
 });
