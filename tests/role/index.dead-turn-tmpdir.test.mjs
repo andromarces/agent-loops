@@ -29,8 +29,10 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
+import { startTimeCache } from "../../src/lib/process-identity.mjs";
 import { readProcessCommands, readProcessTable } from "../../src/lib/process-ancestry.mjs";
 import { statePaths } from "../../src/lib/runstate.mjs";
+import { lockHeld, readLockOwner } from "../../src/lib/state-lock.mjs";
 import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
 import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
@@ -173,10 +175,10 @@ setTimeout(() => process.exit(0), 60000);
  * Starts a real `role dispatch` whose Codex turn hangs and kills the dispatch with SIGKILL mid-turn,
  * once the state file holds the child of the turn. The orphaned fake `codex` is ended unless
  * `keepChild` is set, and teardown ends it either way. Waits, with a bound, until the killed
- * dispatch and its recorded child no longer read as live, because the next call reads both as a
- * lock owner and as a child of the dead turn. Returns the work tree, the temporary directory of the
- * turn (as the turn child saw it), the temporary root that holds it, the pid of the fake `codex`,
- * and the time of the kill.
+ * dispatch and its recorded child no longer read as live, and until the state lock reads free to
+ * the rule that the next call uses, because the next call reads both as a lock owner and as a child
+ * of the dead turn. Returns the work tree, the temporary directory of the turn (as the turn child
+ * saw it), the temporary root that holds it, the pid of the fake `codex`, and the time of the kill.
  */
 async function killedDispatch({
   keepChild = false,
@@ -185,6 +187,7 @@ async function killedDispatch({
   startDelayMs = 0,
 } = {}) {
   const repo = await newRealRunRepo();
+  const { lockFile } = statePaths({ cwd: repo });
   const scratch = await mkdtemp(join(tmpdir(), "dead-turn-"));
   scratches.push(scratch);
   const bin = join(scratch, "bin");
@@ -274,14 +277,22 @@ async function killedDispatch({
   // Windows keeps a killed process in the process table while a handle to it is open. The next call
   // reads the dispatch pid as the state-lock owner and the recorded child as the child of the dead
   // turn, so either one that still looks live refuses the lock or keeps the turn directory. The
-  // dispatcher exit waits in the same bound, so a late exit event cannot hold the case past it.
+  // state lock uses a pid and a start-time stamp, so the wait reads the lock with that same rule
+  // instead of the pid-only check alone. The dispatcher exit waits in the same bound, so a late exit
+  // event cannot hold the case past it.
   const gone = keepChild ? [child.pid] : [child.pid, turn.pid, recordedChildPid];
+  const lockCache = startTimeCache();
   await vi.waitFor(
-    () => {
+    async () => {
+      const owner = await readLockOwner(lockFile);
       expect(
-        { exited: dispatcherExited, live: gone.filter((pid) => processExists(pid)) },
-        `the turn directory is ${existsSync(turn.dir) ? "present" : "absent"} ${Date.now() - killedAt} ms after the kill; the killed dispatch has not exited or a killed process still reads as live`,
-      ).toEqual({ exited: true, live: [] });
+        {
+          exited: dispatcherExited,
+          live: gone.filter((pid) => processExists(pid)),
+          lockHeld: await lockHeld(lockFile, lockCache),
+        },
+        `the turn directory is ${existsSync(turn.dir) ? "present" : "absent"} ${Date.now() - killedAt} ms after the kill; the killed dispatch has not exited, a killed process still reads as live, or the state lock still reads a live owner (pid ${owner?.pid ?? "none"}, start time ${owner?.startTime ?? "unknown"})`,
+      ).toEqual({ exited: true, live: [], lockHeld: false });
     },
     { timeout: 5000, interval: 50 },
   );

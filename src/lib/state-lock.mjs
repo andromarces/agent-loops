@@ -7,7 +7,7 @@ import { linkExclusive, removeTemp } from "./atomic-write.mjs";
 import { sha256 } from "./hash.mjs";
 import { tryParseJson } from "./json.mjs";
 import { logWarn } from "./log.mjs";
-import { ownStartTime, ownerAlive, pidAlive } from "./process-identity.mjs";
+import { ownStartTime, ownerAlive, pidAlive, processStartTime } from "./process-identity.mjs";
 
 // An unparseable lock or claim with no live marker (see `hasLiveWriter`) is
 // stale only once it is older than this. A writer of an older version that runs
@@ -127,7 +127,7 @@ async function acquireLock(
   const owner = parseLockOwner(lockText);
   if (owner && (await ownerAlive(owner))) {
     throw busyError(
-      `${label} is locked by a live process (pid ${owner.pid}, started ${owner.startedAt ?? "unknown"}).`,
+      `${label} is locked by a live process (pid ${owner.pid}, started ${owner.startedAt ?? "unknown"}, start time ${owner.startTime ?? "unknown"}).`,
     );
   }
 
@@ -327,10 +327,14 @@ async function createLock(lockFile) {
   // the stale content can only be the same file, never a later owner. A
   // lock written without one by an older version parses the same way.
   const nonce = randomUUID();
+  // A failed own read is dropped and read again here, so the lock still records the stamp
+  // that a later contender needs to tell a reused pid from this owner. A second failure
+  // leaves no stamp, and the lock keeps the pid-only check.
+  const startTime = (await ownStartTime()) ?? (await processStartTime(process.pid)) ?? undefined;
   const owner = JSON.stringify({
     pid: process.pid,
     startedAt: new Date().toISOString(),
-    startTime: await ownStartTime(),
+    startTime,
     nonce,
   });
   const tempFile = `${lockFile}.${process.pid}.${LOCK_TEMP_TOKEN}.${lockTempCounter++}.tmp`;
