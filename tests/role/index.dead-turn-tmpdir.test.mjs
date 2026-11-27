@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   existsSync,
@@ -480,42 +481,66 @@ const nextCall = (repo, tmpRoot) => {
 // await its exit before teardown. The child writes state, so no test-side timeout leaves it running.
 // Process: the case already runs one real dispatch; this is the second entry point, and it lets the
 // test meet the budget without a late state write.
-async function recoveryCall(repo, tmpRoot, budgetMs) {
+async function recoveryCall(repo, tmpRoot, budgetMs, { spawnChild = spawn } = {}) {
   const runner = [
     `import { main } from ${JSON.stringify(pathToFileURL(ROLE).href)};`,
     "await main(process.argv.slice(1));",
   ].join("\n");
   const args = dispatchArgv().map((value) => (value === "<repo>" ? repo : value));
-  const child = spawn(process.execPath, ["--input-type=module", "-e", runner, "--", ...args], {
-    cwd: repo,
-    stdio: ["ignore", "pipe", "ignore"],
-    env: { ...process.env, TMPDIR: tmpRoot, TEMP: tmpRoot, TMP: tmpRoot },
-  });
+  let child;
+  try {
+    child = spawnChild(process.execPath, ["--input-type=module", "-e", runner, "--", ...args], {
+      cwd: repo,
+      stdio: ["ignore", "pipe", "ignore"],
+      env: { ...process.env, TMPDIR: tmpRoot, TEMP: tmpRoot, TMP: tmpRoot },
+    });
+  } catch (error) {
+    throw new Error(
+      `the recovery call could not start: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   let stdout = "";
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => {
+  child.stdout?.setEncoding?.("utf8");
+  child.stdout?.on?.("data", (chunk) => {
     stdout += chunk;
   });
-  const closed = new Promise((resolve) => {
-    child.once("close", (code, signal) => resolve({ code, signal }));
+  // A failed launch emits `error` and may never emit `close`, so both settle the helper.
+  let settle;
+  const done = new Promise((resolve) => {
+    settle = resolve;
   });
+  child.once("close", (code, signal) => settle({ code, signal }));
+  child.once("error", (error) => settle({ error }));
   let timer;
   const expired = new Promise((resolve) => {
-    timer = setTimeout(() => resolve(true), budgetMs);
+    timer = setTimeout(() => resolve({ timedOut: true }), budgetMs);
   });
   try {
-    const timedOut = await Promise.race([closed.then(() => false), expired]);
-    if (timedOut) {
-      child.kill("SIGKILL");
-      await closed;
+    const result = await Promise.race([done, expired]);
+    if (result.timedOut) {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // The launch already failed; no process runs.
+      }
+      await done;
       return { timedOut: true, code: null, stdout };
     }
-    return { timedOut: false, ...(await closed), stdout };
+    if (result.error !== undefined) {
+      throw new Error(
+        `the recovery call could not start: ${result.error instanceof Error ? result.error.message : String(result.error)}`,
+      );
+    }
+    return { timedOut: false, code: result.code, signal: result.signal, stdout };
   } finally {
     clearTimeout(timer);
     if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGKILL");
-      await closed;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // The launch already failed; no process runs.
+      }
+      await done;
     }
   }
 }
@@ -761,6 +786,29 @@ test("the dead-turn wait reports a liveness read that reaches its bound", async 
   );
   expect(failure.message).toContain("100 ms after the kill");
   expect(calls).toBe(1);
+});
+
+// Usefulness: verifies issue #2042, that a recovery process which fails to launch settles at once
+// with the launch error, so the case reports the pids, liveness, identity read, and elapsed time
+// instead of an outer timeout. Not redundant: no other case fails a launch.
+// In-process: the child double emits `error`; no process is started.
+test("a recovery launch failure settles with its error", async () => {
+  const child = new EventEmitter();
+  child.stdout = Object.assign(new EventEmitter(), { setEncoding() {} });
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = vi.fn();
+  const spawnChild = vi.fn(() => {
+    process.nextTick(() => {
+      child.emit("error", Object.assign(new Error("spawn EAGAIN"), { code: "EAGAIN" }));
+    });
+    return child;
+  });
+
+  await expect(recoveryCall("unused", "unused", 1000, { spawnChild })).rejects.toThrow(
+    /the recovery call could not start: spawn EAGAIN/,
+  );
+  expect(child.kill).toHaveBeenCalled();
 });
 
 // Usefulness: verifies issue #1207 acceptance 2, that a recorded directory which is already gone
