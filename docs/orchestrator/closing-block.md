@@ -56,8 +56,8 @@ reads `**Reviewer notes.**: a`.
 A report label name or `Verdict` in the line still blocks the fold, with any run of marks, optional
 whitespace, and a colon. A `**bold** note` line with trailing text is no heading. A `*` line, a decorated or malformed label, and a `Verdict` line never introduce the list.
 
-A paragraph holds a bold lead and more prose on the same line. With its own dash list between two
-labels it makes the block unparseable: put the paragraph and its list under one label.
+A paragraph holds a bold lead and more prose on the same line. Under a `Label:` line, its own dash
+list between two labels makes the block unparseable: put the paragraph and its list under one label.
 
 Put quoted or multi-paragraph text before the closing block, not inside it, and refer to it from one
 label with a short line. The label keeps the short result that the parent reads. Under a `Label:`
@@ -73,8 +73,9 @@ A column-0 line that holds only `**Label**`, with no colon and no other text, is
 
 A column-0 line that holds only `Label`, with no colon and no other text, is that label too. A lone heading reads as its `Label: <first line>` form: the non-blank lines directly under it supply its value, joined with a space, so `Conclusion` above two prose lines reads them as one value, and a quoted line under it becomes the value unless it reads as a label line. The label and list rules of this file then apply to the lines under it. A blank line, a list, a Markdown table row, or another label line ends the value, so a table under the heading stays unparseable. A line that merely contains a pipe, such as a shell pipeline, stays part of the value. A line inside a fenced code block stays text. A label name with trailing text stays prose. So does a lone label name in earlier prose, or in a response with no `Conclusion` line: the form reads from the last `Conclusion:` line or lone `Conclusion` line to the end, and no earlier line supplies a value.
 
-When no `Conclusion:` label exists, the non-blank plain prose line directly before the first known
-report label outside a fence becomes `Conclusion`. Earlier prose stays out of the report. A block with no known
+When no `Conclusion` line exists in any form, the non-blank plain prose line directly before the
+first report label with a colon outside a fence becomes `Conclusion`; a lone heading directly there
+supplies its own name instead. Earlier prose stays out of the report. A block with no known
 label, or with no such prose line, stays unparseable. A duplicate bold label keeps the
 last-occurrence-wins rule.
 
@@ -98,8 +99,8 @@ single-part response, and every response whose labels use only the `Label:` form
 
 A `- ` item or sub-item that opens with a report label name, plain or bold, for example
 `- Notes: ran` or `- **Deferred:** later`, is item text when it sits inside a run that folds under a label. The same line outside such a run, and any other decorated label,
-makes the block unparseable (issues #1006 and #2013). A prose line directly after the label with no blank line stays
-unparseable. A second prose line before the list, prose after
+makes the block unparseable (issues #1006 and #2013). A prose line directly after a `Label:` line
+with no blank line leaves its list unfolded, so the block stays unparseable. A second prose line before the list, prose after
 the reviewer `Verdict:` line, and a later repeat of the label also stay unparseable.
 
 Any other list in the closing block makes the block unparseable, so the list surfaces
@@ -120,11 +121,12 @@ list, and one shape is the case that matters here: a `*` line whose closing
 `*` a letter precedes, where the character right after the close is not a word
 character or `*`, and where nothing glued from that character on is a letter
 or an ASCII digit, for example `*file*` or `*use a* b`. Such a line is
-dropped without `raw` under any label, and every matching line in the block
+dropped without `raw` under a `Label:` line, and every matching line there
 drops the same way, so the block still parses with the text gone.
 
 A `*` line that is not the dropped shape above either is a list and blanks the block, for example
-`*item`, `* item`, or `*file*.mjs`, or is not a list and drops as prose, for example `**bold** note`.
+`*item`, `* item`, or `*file*.mjs`, or, under a `Label:` line, is not a list and drops as prose, for
+example `**bold** note`.
 
 A table pair is a line with a `|` and a delimiter row directly below it. A Markdown table in the block makes it unparseable: put tabular data in `- ` items, one row per item.
 
