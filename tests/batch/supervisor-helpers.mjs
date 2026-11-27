@@ -84,13 +84,28 @@ export function fakeGh({
     if (args[0] === "pr" && args[1] === "list") {
       return { status: 0, stdout: JSON.stringify([]), stderr: "" };
     }
-    if (args[0] === "pr" && args[1] === "view" && args.includes("changedFiles")) {
+    if (
+      args[0] === "pr" &&
+      args[1] === "view" &&
+      args.some((arg) => arg.startsWith("changedFiles"))
+    ) {
       const number = Number(args[2]);
       if (unreadableFiles.has(number)) {
         return { status: 1, stdout: "", stderr: `no file list for pull request ${number}` };
       }
       const count = (files.get(number) ?? []).length + (mismatchedFiles.has(number) ? 1 : 0);
-      return { status: 0, stdout: JSON.stringify({ changedFiles: count }), stderr: "" };
+      return {
+        status: 0,
+        stdout: JSON.stringify({ changedFiles: count, headRefOid: `head-${number}` }),
+        stderr: "",
+      };
+    }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("headRefOid")) {
+      return {
+        status: 0,
+        stdout: JSON.stringify({ headRefOid: `head-${Number(args[2])}` }),
+        stderr: "",
+      };
     }
     const filePage = /\/pulls\/(\d+)\/files\?per_page=100&page=(\d+)$/.exec(args[1] ?? "");
     if (args[0] === "api" && filePage !== null && args[2] === "--include") {
@@ -109,7 +124,11 @@ export function fakeGh({
     if (args[0] === "repo" && args[1] === "view") {
       return {
         status: 0,
-        stdout: JSON.stringify({ nameWithOwner: "o/r", defaultBranchRef: { name: "main" } }),
+        stdout: JSON.stringify({
+          nameWithOwner: "o/r",
+          url: "https://github.com/o/r",
+          defaultBranchRef: { name: "main" },
+        }),
         stderr: "",
       };
     }

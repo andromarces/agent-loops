@@ -7,21 +7,47 @@ const json = (value) => ({ status: 0, stdout: JSON.stringify(value), stderr: "" 
 const failure = { status: 1, stdout: "", stderr: "no such pull request" };
 
 /**
- * A gh double for the repository read, the changed-file count, and the paged file list of a pull
- * request. `fail` refuses a number, and `mismatch` reports one changed file more than the list.
+ * A gh double for the repository read, the changed-file count, the head reads, and the paged file
+ * list of a pull request. `fail` refuses a number, `mismatch` reports one changed file more than
+ * the list, `afterHeads` moves a head before the closing read, `repoFailure` fails the
+ * repository read, and `url` is the repository URL that read names.
  */
-function ghWith(files, { fail = new Set(), mismatch = new Set() } = {}) {
+function ghWith(
+  files,
+  {
+    fail = new Set(),
+    mismatch = new Set(),
+    heads = new Map(),
+    afterHeads = new Map(),
+    repoFailure = false,
+    url = "https://github.com/o/r",
+  } = {},
+) {
   const calls = [];
+  const headOf = (pr) => heads.get(pr) ?? `head-${pr}`;
   const gh = async (args) => {
     calls.push(args.join(" "));
-    if (args[0] === "repo" && args[1] === "view" && args.includes("nameWithOwner")) {
-      return json({ nameWithOwner: "o/r" });
+    if (
+      args[0] === "repo" &&
+      args[1] === "view" &&
+      args.some((arg) => arg.startsWith("nameWithOwner"))
+    ) {
+      if (repoFailure) return { status: 1, stdout: "", stderr: "no repository" };
+      return json({ nameWithOwner: "o/r", url });
     }
-    if (args[0] === "pr" && args[1] === "view" && args.includes("changedFiles")) {
+    if (
+      args[0] === "pr" &&
+      args[1] === "view" &&
+      args.some((arg) => arg.startsWith("changedFiles"))
+    ) {
       const pr = Number(args[2]);
       if (fail.has(pr)) return failure;
       const count = (files.get(pr) ?? []).length + (mismatch.has(pr) ? 1 : 0);
-      return json({ changedFiles: count });
+      return json({ changedFiles: count, headRefOid: headOf(pr) });
+    }
+    if (args[0] === "pr" && args[1] === "view" && args.includes("headRefOid")) {
+      const pr = Number(args[2]);
+      return json({ headRefOid: afterHeads.get(pr) ?? headOf(pr) });
     }
     const page = /\/pulls\/(\d+)\/files\?per_page=100&page=(\d+)$/.exec(args[1] ?? "");
     if (args[0] === "api" && page !== null && args[2] === "--include") {
@@ -182,4 +208,91 @@ test("a file list at the API cap is incomplete", async () => {
   expect(report).toEqual({ groups: [], incomplete: [11, 12] });
   expect(warnings).toHaveLength(2);
   expect(warnings[0]).toContain("3000");
+});
+
+// Usefulness: a head that moves between the changed-file count and the end of the paged read makes
+// the list incomplete, so a push mid-read never hides a shared path behind a mixed list.
+test("a head that moves during the read is incomplete", async () => {
+  const { gh } = ghWith(
+    new Map([
+      [11, filesAt(150, "src/shared.mjs", 120, "left")],
+      [12, filesAt(150, "src/shared.mjs", 120, "right")],
+    ]),
+    { afterHeads: new Map([[11, "moved-head"]]) },
+  );
+  const warnings = [];
+  const report = await overlapReportOf({
+    loops: [loop(11), loop(12)],
+    gh,
+    repo: "/repo",
+    warn: (message) => warnings.push(message),
+  });
+  expect(report).toEqual({ groups: [], incomplete: [11] });
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("11");
+  expect(warnings[0]).toContain("incomplete");
+});
+
+// Usefulness: a repeated path makes the list incomplete, because a page from another revision can
+// repeat a path and hide the shared one.
+test("a repeated path is incomplete", async () => {
+  const { gh } = ghWith(
+    new Map([
+      [11, ["src/x.mjs", "src/x.mjs", "src/y.mjs"]],
+      [12, ["src/z.mjs"]],
+    ]),
+  );
+  const warnings = [];
+  const report = await overlapReportOf({
+    loops: [loop(11), loop(12)],
+    gh,
+    repo: "/repo",
+    warn: (message) => warnings.push(message),
+  });
+  expect(report).toEqual({ groups: [], incomplete: [11] });
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("11");
+  expect(warnings[0]).toContain("incomplete");
+});
+
+// Usefulness: every REST file-list read names the repository host, so an enterprise repository is
+// read from the same host as its pull request metadata.
+test("every REST file-list read names the repository host", async () => {
+  const { gh, calls } = ghWith(
+    new Map([
+      [11, ["a.mjs"]],
+      [12, ["b.mjs"]],
+    ]),
+    { url: "https://ghe.example.test/o/r" },
+  );
+  const report = await overlapReportOf({
+    loops: [loop(11), loop(12)],
+    gh,
+    repo: "/repo",
+    warn: () => {},
+  });
+  expect(report).toEqual({ groups: [], incomplete: [] });
+  const fileReads = calls.filter((call) => call.includes("/files"));
+  expect(fileReads.length).toBeGreaterThan(0);
+  for (const call of fileReads) expect(call.endsWith("--hostname ghe.example.test")).toBe(true);
+  for (const call of calls.filter((call) => call.startsWith("pr view"))) {
+    expect(call).not.toContain("--hostname");
+  }
+});
+
+// Usefulness: a failed repository read marks each pull request incomplete with a warning that
+// names it, so no pull request leaves the report without a named reason.
+test("a failed repository read names every pull request it marks incomplete", async () => {
+  const { gh } = ghWith(new Map(), { repoFailure: true });
+  const warnings = [];
+  const report = await overlapReportOf({
+    loops: [loop(11), loop(12)],
+    gh,
+    repo: "/repo",
+    warn: (message) => warnings.push(message),
+  });
+  expect(report).toEqual({ groups: [], incomplete: [11, 12] });
+  expect(warnings).toHaveLength(2);
+  expect(warnings[0]).toContain("11");
+  expect(warnings[1]).toContain("12");
 });

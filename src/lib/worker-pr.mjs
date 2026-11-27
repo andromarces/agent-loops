@@ -68,7 +68,10 @@ async function resolvedSshHost(host, { user, decodeUser = false, ssh, cwd, signa
  * number) takes the form `https://host/owner/repo/pull/<number>`, and its last segment must equal
  * that number.
  */
-async function repoIdentity(text, { pull = null, ssh = runSsh, cwd, signal, timeoutMs } = {}) {
+export async function repoIdentity(
+  text,
+  { pull = null, ssh = runSsh, cwd, signal, timeoutMs } = {},
+) {
   const scp = pull === null ? SCP_REMOTE.exec(text) : null;
   let user;
   let host;

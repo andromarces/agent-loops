@@ -4,6 +4,7 @@ import { ghApi, pagedRead } from "../lib/checks/gh-api.mjs";
 import { isJsonObject } from "../lib/json.mjs";
 import { logWarn } from "../lib/log.mjs";
 import { mapInBatches } from "../lib/map-in-batches.mjs";
+import { repoIdentity } from "../lib/worker-pr.mjs";
 import { readGhJson } from "./gh-read.mjs";
 
 const READ_BATCH_SIZE = 4;
@@ -11,26 +12,60 @@ const READ_BATCH_SIZE = 4;
 const PR_FILES_CAP = 3000;
 const SLUG_PATTERN = /^[^/\s]+\/[^/\s]+$/;
 
-/** The `owner/name` of the repository, or null for a reply that names no readable value. */
-async function repoSlugOf(gh, repo) {
-  const view = await readGhJson(gh, ["repo", "view", "--json", "nameWithOwner"], repo);
-  const slug = isJsonObject(view) ? view.nameWithOwner : null;
-  return typeof slug === "string" && SLUG_PATTERN.test(slug) ? slug : null;
+/**
+ * The `slug` and `host` of the repository, or null for a reply that names no readable value. The
+ * host comes from the repository URL through the shared repository-identity resolver, so the REST
+ * read of a pull request goes to the same host as the batch's other GitHub reads, not the gh
+ * default host.
+ */
+async function repoLocationOf(gh, repo) {
+  const view = await readGhJson(gh, ["repo", "view", "--json", "nameWithOwner,url"], repo);
+  if (!isJsonObject(view) || typeof view.url !== "string") return null;
+  const slug = view.nameWithOwner;
+  if (typeof slug !== "string" || !SLUG_PATTERN.test(slug)) return null;
+  const identity = await repoIdentity(view.url, { cwd: repo });
+  const host = typeof identity === "string" ? identity.split("/")[0] : null;
+  return host === null || host === "" ? null : { slug, host };
+}
+
+/** A `gh` runner that appends the repository host to every `api` call and leaves others alone. */
+function apiRunner(gh, host) {
+  return (args, cwd, options) =>
+    args[0] === "api" ? gh([...args, "--hostname", host], cwd, options) : gh(args, cwd, options);
 }
 
 /**
  * Every changed path of one pull request, read from the paginated REST file list and checked
- * against the changed-file count. Throws a message that names the missing proof: a failed read, a
- * list shorter or longer than the count, a list at the API cap, or an entry of another shape.
+ * against the changed-file count. The head is read before and after the list, so a push between
+ * pages cannot pass as one list. Throws a message that names the missing proof: a failed read, a
+ * head that moved, a list shorter or longer than the count, a list at the API cap, a repeated
+ * path, or an entry of another shape.
  */
-async function completePathsOf(gh, repo, slug, pr) {
-  const view = await readGhJson(gh, ["pr", "view", String(pr), "--json", "changedFiles"], repo);
-  if (!isJsonObject(view) || !Number.isInteger(view.changedFiles) || view.changedFiles < 0) {
-    throw new Error("the changed-file count is unreadable");
+async function completePathsOf(gh, repo, { slug, host }, pr) {
+  const view = await readGhJson(
+    gh,
+    ["pr", "view", String(pr), "--json", "changedFiles,headRefOid"],
+    repo,
+  );
+  if (
+    !isJsonObject(view) ||
+    !Number.isInteger(view.changedFiles) ||
+    view.changedFiles < 0 ||
+    typeof view.headRefOid !== "string"
+  ) {
+    throw new Error("the changed-file count or the head is unreadable");
   }
-  const pages = await ghApi(pagedRead(gh, null), [`repos/${slug}/pulls/${pr}/files`], repo);
+  const pages = await ghApi(
+    pagedRead(apiRunner(gh, host), null),
+    [`repos/${slug}/pulls/${pr}/files`],
+    repo,
+  );
   if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
     throw new Error("the read named no page list");
+  }
+  const after = await readGhJson(gh, ["pr", "view", String(pr), "--json", "headRefOid"], repo);
+  if (!isJsonObject(after) || after.headRefOid !== view.headRefOid) {
+    throw new Error("the pull request head changed during the read");
   }
   const entries = pages.flat();
   if (entries.length >= PR_FILES_CAP) {
@@ -42,10 +77,13 @@ async function completePathsOf(gh, repo, slug, pr) {
     );
   }
   const paths = [];
+  const seen = new Set();
   for (const entry of entries) {
     if (!isJsonObject(entry) || typeof entry.filename !== "string") {
       throw new Error("the list holds an entry that names no path");
     }
+    if (seen.has(entry.filename)) throw new Error(`the list repeats ${entry.filename}`);
+    seen.add(entry.filename);
     paths.push(entry.filename);
     if (typeof entry.previous_filename === "string") paths.push(entry.previous_filename);
   }
@@ -113,20 +151,24 @@ export async function overlapReportOf({ loops, gh, repo, warn = logWarn }) {
   ].sort((a, b) => a - b);
   // One pull request cannot overlap, and no read is needed to report that.
   if (numbers.length < 2) return { groups: [], incomplete: [] };
-  let slug;
+  let location;
   try {
-    slug = await repoSlugOf(gh, repo);
+    location = await repoLocationOf(gh, repo);
   } catch (err) {
-    warn(`the repository name read failed: ${err?.message ?? err}`);
+    for (const pr of numbers) {
+      warn(`pull request ${pr}: the repository name read failed: ${err?.message ?? err}`);
+    }
     return { groups: [], incomplete: numbers };
   }
-  if (slug === null) {
-    warn("the repository name read named no readable owner and name");
+  if (location === null) {
+    for (const pr of numbers) {
+      warn(`pull request ${pr}: the repository name read named no readable owner, name, and host`);
+    }
     return { groups: [], incomplete: numbers };
   }
   const reads = await mapInBatches(numbers, READ_BATCH_SIZE, async (pr) => {
     try {
-      return { pr, paths: await completePathsOf(gh, repo, slug, pr) };
+      return { pr, paths: await completePathsOf(gh, repo, location, pr) };
     } catch (err) {
       warn(`pull request ${pr}: the file list read is incomplete: ${err?.message ?? err}`);
       return { pr, paths: null };

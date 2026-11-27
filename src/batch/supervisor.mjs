@@ -373,14 +373,21 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         overlap = null;
       }
     }
-    const updated = await updateManifestReturning(runsRoot, id, (value) => ({
-      ...value,
-      status,
-      ...(pausedReason === null ? {} : { pauseReason: pausedReason }),
-      ...(overlap === null
-        ? {}
-        : { overlapGroups: overlap.groups, overlapIncomplete: overlap.incomplete }),
-    }));
+    const updated = await updateManifestReturning(runsRoot, id, (value) => {
+      // A finalizer never moves a batch that another process recorded terminal, so a cancel of
+      // this command cannot undo a completion that already stored its report. The check runs
+      // under the batch lock, on the value the write would replace.
+      const recorded = value.status === "completed" || value.status === "failed";
+      if (recorded && value.status !== status) return undefined;
+      return {
+        ...value,
+        status,
+        ...(pausedReason === null ? {} : { pauseReason: pausedReason }),
+        ...(overlap === null
+          ? {}
+          : { overlapGroups: overlap.groups, overlapIncomplete: overlap.incomplete }),
+      };
+    });
     manifest = updated.manifest;
     const complete = status === "completed" || status === "failed";
     if (complete && manifest.completionNotified !== true) {

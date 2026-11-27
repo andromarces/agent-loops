@@ -5,7 +5,13 @@ import { expect, test, vi } from "vite-plus/test";
 import { readDecision } from "../../src/batch/decisions.mjs";
 import { loopEntry } from "../../src/batch/loop-records.mjs";
 import { readBatchStatus } from "../../src/batch/status.mjs";
-import { batchPaths, readLoop, readManifest, updateLoop } from "../../src/batch/store.mjs";
+import {
+  batchPaths,
+  readLoop,
+  readManifest,
+  updateLoop,
+  updateManifest,
+} from "../../src/batch/store.mjs";
 import { newBatchId, runBatch } from "../../src/batch/supervisor.mjs";
 import {
   batchRepo,
@@ -452,6 +458,64 @@ test("a stop during the overlap read keeps the interrupt result and the resume r
     expect(resumed.summary.overlapGroups).toEqual([
       { pulls: [11, 12], paths: ["src/handler.mjs"] },
     ]);
+  } finally {
+    await cleanupRepo();
+  }
+});
+
+// Usefulness: a cancel of the original command after another resume completed the batch leaves the
+// completed manifest and its stored report in place, so a finalizer never moves a completed batch.
+test("a cancel never moves a batch another process completed", async () => {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const first = childDouble({ pr: 11 });
+  const second = childDouble({ pr: 12 });
+  const spawn = (options) =>
+    first.calls.length === 0 ? first.spawn(options) : second.spawn(options);
+  const files = new Map([
+    [11, ["src/handler.mjs"]],
+    [12, ["src/handler.mjs"]],
+  ]);
+  const inner = fakeGh({ files });
+  const reached = deferred();
+  const gate = deferred();
+  const blockedGh = async (args, cwd) => {
+    if (args[0] === "api" && typeof args[1] === "string" && args[1].includes("/pulls/11/files")) {
+      reached.resolve();
+      await gate.promise;
+    }
+    return inner(args, cwd);
+  };
+  const controller = new AbortController();
+  const recorded = [{ pulls: [11, 12], paths: ["src/handler.mjs"] }];
+  try {
+    const run = runBatch({
+      prepared,
+      runsRoot,
+      gh: blockedGh,
+      deps: {
+        ...fakeGitDeps,
+        notifier: noNotify,
+        spawn,
+        installSignal: false,
+        signal: controller.signal,
+      },
+    });
+    await reached.promise;
+    await updateManifest(runsRoot, prepared.id, (value) => ({
+      ...value,
+      status: "completed",
+      overlapGroups: recorded,
+      overlapIncomplete: [],
+    }));
+    controller.abort();
+    gate.resolve();
+    const { summary } = await run;
+    const manifest = await readManifest(runsRoot, prepared.id);
+    expect(manifest.status).toBe("completed");
+    expect(manifest.overlapGroups).toEqual(recorded);
+    expect(summary.status).toBe("completed");
+    expect(summary.overlapGroups).toEqual(recorded);
   } finally {
     await cleanupRepo();
   }
