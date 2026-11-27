@@ -51,6 +51,7 @@ The review of PR #2032 also noted that the worker install ban read `Run no depen
 ## Links
 
 - [Issue #2034: Forbid a reviewer probe copy from linking into the work tree](https://github.com/andromarces/agent-loops/issues/2034)
+- [PR #2036: Forbid a reviewer probe copy from linking into the work tree](https://github.com/andromarces/agent-loops/pull/2036)
 - [ADR 0173: Forbid a probe copy from linking a work tree directory](0173-forbid-a-probe-copy-from-linking-a-work-tree-directory.md)
 - [Issue #2028: Forbid a worker probe copy from linking into the work tree node_modules](https://github.com/andromarces/agent-loops/issues/2028)
 - [Issue #1026: Keep dependency installs and package-store writes out of reviewer turns](https://github.com/andromarces/agent-loops/issues/1026)
