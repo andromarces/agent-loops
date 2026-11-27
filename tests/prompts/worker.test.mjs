@@ -536,13 +536,14 @@ test("first worker turn bars linking another checkout node_modules into the work
   );
 });
 
-// Usefulness: verifies requirement "a worker probe copy reuses the work tree node_modules" (issue
-// #1026): a tool such as `vp` installs into the shared package store when the copy has no usable
-// `node_modules`, and every work tree that links the store sees that write.
-test("first worker turn tells a probe copy to link the work tree node_modules and run no install", () => {
+// Usefulness: verifies requirement "a worker probe copy never links a work tree directory into it"
+// (issue #2028): a recursive delete of a copied directory that followed a junction removed the run
+// work tree's `node_modules`. The copy installs its own dependencies or the probe runs inside the
+// work tree.
+test("first worker turn bars a probe copy from linking a work tree directory into it", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "When a probe copies the repository, for example to run old source, link the `node_modules` of the work tree into the copy. Use a junction on Windows or a symlink elsewhere. Run no dependency install, repair, or update there.",
+    "When a probe copies the repository, for example with `git worktree add` under the turn temporary directory to run old source, install the copy's own dependencies or run the probe inside the work tree. Never link or junction a work tree directory into the copy: a recursive delete of the copy that follows the link removes the work tree's `node_modules`.",
   );
   expect(prompt).toContain(
     "A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`. Every work tree that links the store sees that write.",

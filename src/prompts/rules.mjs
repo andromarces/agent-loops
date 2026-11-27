@@ -335,8 +335,8 @@ const probeLink = (place) =>
   `link the ${PROBE_DEPENDENCY[place]} of the work tree into the copy, ${PROBE_JUNCTION}`;
 
 const probeCopyText = {
-  "work tree": (place) =>
-    `When a probe copies the repository, for example to run old source, link the ${PROBE_DEPENDENCY[place]} of the work tree into the copy. Use a junction on Windows or a symlink elsewhere. Run no ${NO_DEPENDENCY_INSTALL} there.
+  "work tree": () =>
+    `When a probe copies the repository, for example with \`git worktree add\` under the turn temporary directory to run old source, install the copy's own dependencies or run the probe inside the work tree. Never link or junction a work tree directory into the copy: a recursive delete of the copy that follows the link removes the work tree's \`node_modules\`.
   - A tool such as \`vp\` installs into ${SHARED_PACKAGE_STORE} when it finds no usable \`node_modules\`. Every work tree that links the store sees that write. Before \`pnpm run\` or \`pnpm exec\` in a probe copy, set \`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn\` in the environment of that command, or ${INSTALLED_BINARY}. pnpm installs from its dependency check by default.`,
   repository: (place) =>
     `Run no ${NO_DEPENDENCY_INSTALL} in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to ${SHARED_PACKAGE_STORE} outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. A probe copy of the repository, for example a copy of old source, reuses the installed dependencies of the work tree: ${probeLink(place)}, before a tool runs there. When the copy cannot link it, ${PROBE_UNRESOLVED} The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, ${INSTALLED_BINARY} instead of a package manager run or exec command, or ${PROBE_UNRESOLVED}`,
