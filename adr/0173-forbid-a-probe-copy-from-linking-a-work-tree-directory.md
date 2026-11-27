@@ -48,5 +48,6 @@ The worker prompt told a probe copy to link the work tree's `node_modules` (issu
 - [Issue #1026: Keep dependency installs and package-store writes out of reviewer turns](https://github.com/andromarces/agent-loops/issues/1026)
 - [Issue #1145: Stop the pnpm dependency check from installing during a reviewer turn](https://github.com/andromarces/agent-loops/issues/1145)
 - [Issue #998: Document a link-safe removal of the run work tree after git worktree remove](https://github.com/andromarces/agent-loops/issues/998)
+- [PR #2032: Forbid a worker probe copy from linking into the work tree node_modules](https://github.com/andromarces/agent-loops/pull/2032)
 - `src/prompts/rules.mjs`
 - `tests/prompts/worker.test.mjs`
