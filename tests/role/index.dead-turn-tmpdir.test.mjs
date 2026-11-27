@@ -78,8 +78,8 @@ const scratches = [];
 const dispatches = [];
 // A live child that a case records as the child of a dead turn, so teardown ends it too.
 const children = [];
-// The fake `codex` pid and start time of each `killedDispatch` scratch, so teardown confirms the
-// process before a signal and never kills a reused pid.
+// The fake `codex` pid and start time of each `killedDispatch` scratch, so teardown can narrow
+// pid reuse. An unread identity falls back to main's pid-only cleanup.
 const fakeStarts = new Map();
 
 /** Starts a live node process, to stand as the child of a dead turn. */
@@ -133,9 +133,9 @@ async function endTree(child) {
 }
 
 // Ends every spawned dispatcher and every fake `codex`, on every path of a test, a startup timeout
-// included: the tree of a live dispatcher first, then the fake whose recorded pid and start time
-// still name the same process. A fake without a recorded start time is not signalled, because its
-// identity is unconfirmed and the script ends itself.
+// included: the tree of a live dispatcher first, then each fake by main's pid-only cleanup. When a
+// start time was recorded, the signal waits for that identity; an unread identity falls back to
+// the pid-only cleanup.
 async function endSpawned() {
   for (const child of dispatches.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
@@ -147,10 +147,20 @@ async function endSpawned() {
   for (const dir of scratches) {
     const fake = fakeStarts.get(dir);
     fakeStarts.delete(dir);
-    if (fake === undefined || fake.startTime === undefined) {
+    if (fake === undefined) {
+      // Main's cleanup for a fake whose pid was written but whose identity was never recorded.
+      const pid = await fakePid(dir);
+      if (pid !== null && processExists(pid)) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The fake ended between the check and the signal.
+        }
+      }
       continue;
     }
-    if (await ownerAlive(fake)) {
+    const signal = fake.startTime === undefined ? processExists(fake.pid) : await ownerAlive(fake);
+    if (signal) {
       try {
         process.kill(fake.pid, "SIGKILL");
       } catch {
@@ -229,7 +239,7 @@ async function readTurnLiveness({ lockFile, lockPid, child, fake }, boundMs) {
 
 // The pids, recorded start times, liveness reads, and elapsed time of a killed-turn failure.
 function describeTurn(
-  { turnDir, lockPid, lockStartTime, child, fake },
+  { turnDir, lockPid, lockStartTime, child, fake, identityMs },
   reads,
   dispatcherExited,
   elapsedMs,
@@ -242,11 +252,12 @@ function describeTurn(
         : read.value
           ? "alive"
           : "gone";
+  const identityRead = identityMs === undefined ? "not recorded" : `${Math.round(identityMs)} ms`;
   return (
     `the turn directory is ${existsSync(turnDir) ? "present" : "absent"} ${Math.round(elapsedMs)} ms after the kill; ` +
     `at the wait, state lock owner pid ${lockPid ?? "none"} (start time ${lockStartTime ?? "unknown"}) ${status(reads?.lock)}; ` +
     `child pid ${child.pid} (start time ${child.startTime ?? "unknown"}) ${status(reads?.child)}; ` +
-    `fake codex pid ${fake.pid} (start time ${fake.startTime ?? "unknown"}) ${status(reads?.fake)}; ` +
+    `fake codex pid ${fake.pid} (start time ${fake.startTime ?? "unknown"}, identity read ${identityRead}) ${status(reads?.fake)}; ` +
     `dispatcher ${dispatcherExited ? "exited" : "not exited"}`
   );
 }
@@ -401,16 +412,21 @@ async function killedDispatch({
   // The lock owner is the dispatcher, and the fake codex is the child of the turn. Both start
   // times are read before the kill, so the wait can apply the same rule as the state lock.
   const lockOwner = await readLockOwner(lockFile);
-  const fake = { pid: turn.pid, startTime: (await processStartTime(turn.pid)) ?? undefined };
+  // The identity query runs before the kill, so it cannot extend the post-kill wait. Its elapsed
+  // time is part of every later failure report.
+  const identityStartedAt = performance.now();
+  const fakeStartTime = (await processStartTime(turn.pid)) ?? undefined;
+  const identityMs = performance.now() - identityStartedAt;
+  const fake = { pid: turn.pid, startTime: fakeStartTime };
   fakeStarts.set(scratch, fake);
   const killedAt = Date.now();
   child.kill("SIGKILL");
-  // The fake codex can exit before the dispatcher does, and its pid can be reused. Confirm its
-  // recorded start time before the signal, so a replacement is never killed. Without a recorded
-  // stamp the identity is unconfirmed, so no signal is sent and the script ends itself.
-  if (!keepChild && fake.startTime !== undefined && (await ownerAlive(fake))) {
+  // Main's cleanup: signal the fake by pid when the dispatcher is killed, whether or not its
+  // recorded identity was read. The recorded start time narrows the teardown signal; an unread
+  // identity falls back to this pid-only cleanup.
+  if (!keepChild && processExists(turn.pid)) {
     try {
-      process.kill(fake.pid, "SIGKILL");
+      process.kill(turn.pid, "SIGKILL");
     } catch {
       // The child ended between the check and the signal; the wait below confirms it.
     }
@@ -428,6 +444,7 @@ async function killedDispatch({
     lockStartTime: lockOwner?.startTime,
     child: { pid: recordedChild.pid, startTime: recordedChild.startTime },
     fake,
+    identityMs,
   };
   const reads = await waitForKilledTurn(turnLiveness, {
     dispatcherExited: () => dispatcherExited,
@@ -567,6 +584,7 @@ const waitTurn = {
   lockStartTime: "darwin-lstart:1000",
   child: { pid: 2345, startTime: "darwin-lstart:1000" },
   fake: { pid: 3456, startTime: "darwin-lstart:1000" },
+  identityMs: 12,
 };
 
 // Usefulness: verifies issue #2042, that the wait asks the state lock's rule and not a recorded pid
@@ -630,6 +648,7 @@ test("the dead-turn wait reports a held lock and starts no read after its bound"
   expect(failure).toBeInstanceOf(Error);
   expect(failure.message).toContain("state lock owner pid 1234");
   expect(failure.message).toContain("alive");
+  expect(failure.message).toContain("identity read 12 ms");
   expect(failure.message).toContain("100 ms after the kill");
   expect(calls).toBe(1);
 });
