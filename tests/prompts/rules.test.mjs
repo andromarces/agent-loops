@@ -229,7 +229,9 @@ test("the closing-block rule states the one-blank-line list fold", () => {
   expect(reportBlock).toMatch(
     /dash or ordered list under a label after one blank line[^.]*joins that label's value/,
   );
-  expect(reportBlock).toMatch(/any number of sections follow, with one blank line before each/);
+  expect(reportBlock).toMatch(
+    /Under a `Label:` line, after the label value, any number of sections follow, with one blank line before each/,
+  );
   expect(reportBlock).toMatch(/A section is a bare dash list, or a prose lead with its dash list/);
   expect(reportBlock).toMatch(
     /The lead follows the prose-lead rules, the whole-line bold heading included/,
@@ -262,6 +264,18 @@ test("the closing-block rule states the whole-line bold heading exception", () =
     /\*\*Reviewer notes\.\*\*` above `- a` reads `\*\*Reviewer notes\.\*\*: a`/,
   );
   expect(reportBlock).toMatch(/bold heading line that groups a dash list outside the prose fold/);
+});
+
+// Usefulness: verifies the closing-block rule scopes the star-line drop to the `Label:` form and
+// states the lone-heading value, so the child prompt matches the parser for both heading forms
+// (issue #2035). No other test pins this summary.
+test("the closing-block rule scopes the star-line summary to its heading form", () => {
+  expect(reportBlock).toMatch(
+    /Under a `Label:` line, a line that starts with `\*` counts as a list, is dropped from the block, or makes the block unparseable, so write none/,
+  );
+  expect(reportBlock).toMatch(
+    /A lone heading keeps a non-list `\*` line in its value run as the value/,
+  );
 });
 
 // Usefulness: verifies the rule names both issue #1380 shapes: an indented dash list under a label
