@@ -60,13 +60,15 @@ covers a different question: which pull requests need combined validation.
    `src/batch/eligibility.mjs`: the pull request's closing references, its body keywords when its
    base is not the default branch, and its commit messages. A closing reference counts only when
    its repository is the batch repository, compared by owner and name without case, so another
-   repository's `#42` never closes local issue 42. One `gh pr view` read names the references,
+   repository's `#42` never closes local issue 42. Only a well-formed GitHub owner and name is a
+   readable identity, and a malformed one is never trimmed or normalized into a match. One
+   `gh pr view` read names the references,
    body, and base, and the paginated commit read names the commit messages. The repository identity
    is read once per command and shared by every delivery check. The success checkpoint records the
    fact in the same write as its status and report, so the marker never depends on a later read.
 7. A failed call, a reply without a closing reference list, a closing reference whose repository
-   identity is missing or unreadable, and a commit list that reaches the API's 250-commit page
-   without naming the issue are all unreadable evidence. Each logs one warning and records
+   identity is missing, malformed, or unreadable, and a commit list that reaches the API's
+   250-commit page without naming the issue are all unreadable evidence. Each logs one warning and records
    `null`, which reads as `closing-reference-unread`. An unreadable read never reads as delivered,
    never fails the batch, and never changes an exit code. The eligibility check keeps excluding an
    issue whose closing reference names no readable repository, as it did before this ADR: only a

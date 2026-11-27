@@ -373,10 +373,22 @@ function referenceRepository(reference) {
   return null;
 }
 
-/** The lower-cased owner and name of an `owner/name` value, or null when it is not one. */
+// A GitHub owner login holds letters, digits, and single hyphens, and never starts or ends with a
+// hyphen. A repository name holds letters, digits, dots, hyphens, and underscores. A value outside
+// these shapes is no readable identity, so a malformed one is never trimmed or normalized into a
+// match.
+const OWNER_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+const REPOSITORY_NAME = /^[A-Za-z0-9._-]{1,100}$/;
+
+/** The lower-cased owner and name of a well-formed `owner/name` value, or null when it is not one. */
 function repositoryParts(value) {
-  const match = /^([^/]+)\/([^/]+)$/.exec(value);
-  return match === null ? null : [match[1].toLowerCase(), match[2].toLowerCase()];
+  if (typeof value !== "string") return null;
+  const parts = value.split("/");
+  if (parts.length !== 2) return null;
+  const [owner, name] = parts;
+  if (!OWNER_NAME.test(owner)) return null;
+  if (!REPOSITORY_NAME.test(name) || name === "." || name === "..") return null;
+  return [owner.toLowerCase(), name.toLowerCase()];
 }
 
 /**

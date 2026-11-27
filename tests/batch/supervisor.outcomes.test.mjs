@@ -1702,3 +1702,35 @@ test("a closing reference matches the repository without case", async () => {
 
   expect(summary.loops.map((loop) => loop.partial)).toEqual([undefined, undefined]);
 });
+
+// Usefulness: issue #2049 review — a malformed reference repository identity is unverified
+// delivery, not a non-closing pull request. Not redundant: it covers a malformed identity apart
+// from another repository.
+test("a malformed reference repository marks the loop partial and warns", async () => {
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { summary } = await runTwo(
+      [
+        { pr: 11, summary: summaryOf("none") },
+        { pr: 12, summary: summaryOf("none") },
+      ],
+      fakeGh({
+        closingReferences: new Map([
+          [11, [{ number: 1, repository: { nameWithOwner: "example/current " } }]],
+          [12, [2]],
+        ]),
+      }),
+    );
+
+    expect(summary.loops[0]).toMatchObject({
+      status: "succeeded",
+      partial: true,
+      partialReasons: ["closing-reference-unread"],
+    });
+    expect(summary.loops[1].partial).toBeUndefined();
+    const lines = errorSpy.mock.calls.map((call) => String(call[0]));
+    expect(lines.some((line) => line.includes("warn") && line.includes("repository"))).toBe(true);
+  } finally {
+    errorSpy.mockRestore();
+  }
+});

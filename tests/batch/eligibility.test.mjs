@@ -686,3 +686,30 @@ test("a closing reference with no readable repository keeps the issue closed for
   });
   expect([...closures.closed]).toEqual([9]);
 });
+
+// Usefulness: issue #2049 review — a malformed repository identity is unreadable, not foreign, so
+// eligibility keeps main's exclusion of the issue. Not redundant: the identity is malformed, not
+// another well-formed repository.
+test("a malformed reference repository keeps the issue closed for eligibility", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh([
+      {
+        number: 15,
+        headRefName: "a",
+        closingIssuesReferences: [{ number: 9, repository: { nameWithOwner: "example/current " } }],
+        baseRefName: "main",
+        body: "",
+      },
+    ]),
+    repo: "C:\repo",
+  });
+  expect([...closures.closed]).toEqual([9]);
+  const result = await checkEligibility({
+    issue: 9,
+    gh: issueReply("OPEN"),
+    repo: "C:\repo",
+    claim: { exists: false },
+    openPrClosures: closures,
+  });
+  expect(result).toMatchObject({ ok: false, reason: "closed-by-open-pr" });
+});
