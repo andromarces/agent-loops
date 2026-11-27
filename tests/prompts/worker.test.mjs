@@ -547,7 +547,6 @@ test("first worker turn makes a probe copy a Git work tree and states the link-s
   expect(prompt).toContain(
     "When a probe of another commit needs a copy, the copy is a Git work tree made with `git worktree add` under the turn temporary directory, not an archive extraction, and it never links or junctions a directory of any work tree or checkout (the run work tree, the primary checkout, or another work tree) into it. A probe copy with no dependencies of its own runs only commands that need none. Run no dependency install, repair, or update in any probe copy.",
   );
-  expect(prompt).toContain("Run no dependency install, repair, or update in any probe copy.");
   expect(prompt).toContain(
     'Remove the probe work tree with `git worktree remove --force "<probe copy>"` before any folder delete.',
   );

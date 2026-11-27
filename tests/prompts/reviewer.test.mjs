@@ -902,22 +902,21 @@ test("fixed reviewer text excludes the test slot rule paths and still catches a 
   expect(`${fixed} Run pnpm install.`).toMatch(TOOL_NAME);
 });
 
-// Usefulness: verifies acceptance #2034 — a reviewer probe copy follows the ADR 0173 form: a Git
-// work tree with no link or junction from any checkout, removed with `git worktree remove --force`
-// before a link-safe folder delete. A linked copy let a recursive delete follow the junction and
-// remove the work tree's dependencies (issue #2028).
-test("reviewer prompt makes a probe copy a Git work tree and states the link-safe removal", () => {
+// Usefulness: verifies acceptance #2034 — the reviewer probe-copy rule keeps the plain copy method
+// of main, because `git worktree add` writes to the shared worktree registry and the reviewer turn
+// forbids a change of shared Git state. A link or junction into a copy is a risk: a recursive
+// delete can follow it and remove the work tree's dependencies, which issue #2028 reports as a
+// risk of that link.
+test("reviewer prompt bans the probe-copy link for every copy and states the link-safe removal", () => {
   const prompt = fixedReviewerText();
   expect(prompt).toContain(
-    "When a probe of another commit needs a copy, the copy is a Git work tree made with `git worktree add` under the turn temporary directory, not an archive extraction, and it never links or junctions a directory of any work tree or checkout (the run work tree, the primary checkout, or another work tree) into it.",
-  );
-  expect(prompt).toContain("Run no dependency install, repair, or update in any probe copy.");
-  expect(prompt).toContain(
-    'Remove the probe work tree with `git worktree remove --force "<probe copy>"` before any folder delete.',
+    "A probe copy of the repository, of the current commit or another commit, never links or junctions a directory of any work tree or checkout (the work tree, the primary checkout, or another work tree) into it.",
   );
   expect(prompt).toContain(
     'When a probe copy holds a link or junction, remove it without a recursive delete that follows links: `cmd.exe /c rmdir /s /q "<probe copy with backslashes>"` in cmd.exe or PowerShell, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<probe copy>")"` in Git Bash, or `rm -rf "<probe copy>"` on POSIX.',
   );
+  expect(prompt).not.toContain("git worktree add");
+  expect(prompt).not.toContain("git worktree remove");
   expect(prompt).not.toContain("link the dependency directory of the work tree into the copy");
   // The prompt fits any repository (ADR 0038), so the rule names no tool or directory.
   expect(prompt).not.toMatch(TOOL_NAME);

@@ -333,6 +333,12 @@ const PROBE_INSTALL_BAN = `Run no ${NO_DEPENDENCY_INSTALL} in any probe copy.`;
 const PROBE_REMOVE_WORK_TREE =
   'Remove the probe work tree with `git worktree remove --force "<probe copy>"` before any folder delete.';
 
+// The reviewer keeps the plain copy method of main: `git worktree add` writes to the shared
+// worktree registry, which the read-only turn does not change. The ban covers a copy of the current
+// commit as well as a copy of another commit.
+const PROBE_REVIEWER_NO_LINK =
+  "A probe copy of the repository, of the current commit or another commit, never links or junctions a directory of any work tree or checkout (the work tree, the primary checkout, or another work tree) into it.";
+
 const PROBE_LINK_SAFE_REMOVAL =
   'When a probe copy holds a link or junction, remove it without a recursive delete that follows links: `cmd.exe /c rmdir /s /q "<probe copy with backslashes>"` in cmd.exe or PowerShell, `MSYS_NO_PATHCONV=1 cmd.exe /c rmdir /s /q "$(cygpath -w "<probe copy>")"` in Git Bash, or `rm -rf "<probe copy>"` on POSIX.';
 
@@ -341,7 +347,7 @@ const probeCopyText = {
     `${PROBE_IS_GIT_WORK_TREE} A probe copy with no dependencies of its own runs only commands that need none. ${PROBE_INSTALL_BAN} ${PROBE_REMOVE_WORK_TREE} ${PROBE_LINK_SAFE_REMOVAL}
   - A tool such as \`vp\` installs into ${SHARED_PACKAGE_STORE} when it finds no usable \`node_modules\`. Every work tree that links the store sees that write. Before \`pnpm run\` or \`pnpm exec\` in a probe copy, set \`PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN=warn\` in the environment of that command, or ${INSTALLED_BINARY}. pnpm installs from its dependency check by default.`,
   repository: () =>
-    `Run no ${NO_DEPENDENCY_INSTALL} in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to ${SHARED_PACKAGE_STORE} outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. ${PROBE_IS_GIT_WORK_TREE} ${PROBE_INSTALL_BAN} ${PROBE_REMOVE_WORK_TREE} ${PROBE_LINK_SAFE_REMOVAL} The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, ${INSTALLED_BINARY} instead of a package manager run or exec command, or ${PROBE_UNRESOLVED}`,
+    `Run no ${NO_DEPENDENCY_INSTALL} in this turn, and start no command that installs, such as a package manager install, add, update, or repair command, or a test runner that installs when it finds no usable installed dependencies. An install writes to ${SHARED_PACKAGE_STORE} outside the repository and reaches every work tree that links it, and the runtime mutation check does not see those writes. ${PROBE_REVIEWER_NO_LINK} ${PROBE_LINK_SAFE_REMOVAL} The runtime sets the environment of this turn so that the dependency check of a package manager warns and never installs before a run or exec command. In a probe copy, ${INSTALLED_BINARY} instead of a package manager run or exec command, or ${PROBE_UNRESOLVED}`,
 };
 
 /**
