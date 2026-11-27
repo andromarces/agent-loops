@@ -540,12 +540,14 @@ test("first worker turn bars linking another checkout node_modules into the work
 // (issue #2028): a recursive delete of such a copy can follow the junction and remove the run work
 // tree's `node_modules`. Issue #2028 records that the worker removed the copies and reported that
 // `node_modules` stayed intact. The issue's own example makes the copy a Git work tree, and the
-// rule states the link-safe removal for a copy that holds a link.
+// rule states the link-safe removal for a copy that holds a link. Issue #2034 requires the install
+// ban to name every probe copy, including a copy of the same commit.
 test("first worker turn makes a probe copy a Git work tree and states the link-safe removal", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "When a probe of another commit needs a copy, the copy is a Git work tree made with `git worktree add` under the turn temporary directory, not an archive extraction, and it never links or junctions a directory of any work tree or checkout (the run work tree, the primary checkout, or another work tree) into it. A probe copy with no dependencies of its own runs only commands that need none. Run no dependency install, repair, or update there.",
+    "When a probe of another commit needs a copy, the copy is a Git work tree made with `git worktree add` under the turn temporary directory, not an archive extraction, and it never links or junctions a directory of any work tree or checkout (the run work tree, the primary checkout, or another work tree) into it. A probe copy with no dependencies of its own runs only commands that need none. Run no dependency install, repair, or update in any probe copy.",
   );
+  expect(prompt).toContain("Run no dependency install, repair, or update in any probe copy.");
   expect(prompt).toContain(
     'Remove the probe work tree with `git worktree remove --force "<probe copy>"` before any folder delete.',
   );

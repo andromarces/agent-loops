@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Superseded by [ADR 0174: Forbid a reviewer probe copy from linking into the work tree](0174-forbid-a-reviewer-probe-copy-from-linking-into-the-work-tree.md). ADR 0174 replaces decision 2's install-ban sentence, so the ban names any probe copy, decision 7, which kept the reviewer probe-copy rule unchanged, the consequence that the reviewer prompt links the work tree's dependency directory, and alternative 4, which declined to change the reviewer rule. Decisions 1, 3, 4, 5, and 6 and every other consequence remain in force.
 
 ## Date
 
