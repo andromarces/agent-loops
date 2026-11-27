@@ -502,9 +502,6 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
     // turn ended uncertainly. The first call after the crash always marks
     // `interrupted`, exits non-zero, and spawns no child. A maintainer can
     // resume from `interrupted` on a later call.
-    // A canceled call stops before it writes the recovery, so a caller that
-    // abandons the call at a budget cannot leave a late state write behind.
-    throwIfCanceled(signal, roleName);
     state.lifecycle = "interrupted";
     // The previous call charged a step and recorded no result for it, so the
     // history is missing that turn. Record it here, marked `interrupted`: no
@@ -512,7 +509,6 @@ async function recoverLifecycle(state, args, { paths, signal, readProcessCommand
     // and time come from that turn's `lastDispatch`, because this call's
     // `--role` need not be the role that ended uncertainly.
     await recordUncertainTurn(state, roleName);
-    throwIfCanceled(signal, roleName);
     await writeState(paths.stateFile, state);
     throw new RoleError(
       "Previous turn ended uncertainly; state marked interrupted. Use abort, or dispatch --resume-interrupted to continue.",

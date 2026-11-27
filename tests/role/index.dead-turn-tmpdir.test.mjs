@@ -471,14 +471,54 @@ async function killedDispatch({
 
 // The recovery call inherits the temporary directory that held the turn directory, as a call of the
 // same host does. A record of another parent is refused (issue #1216).
-const nextCall = (repo, tmpRoot, signal) => {
+const nextCall = (repo, tmpRoot) => {
   for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, tmpRoot);
-  return executeRoleCommand(withRepo(dispatchArgv(), repo), {
-    ...basicDeps(),
-    stdin: stdinPrompt,
-    signal,
-  });
+  return executeRoleCommand(withRepo(dispatchArgv(), repo), { ...basicDeps(), stdin: stdinPrompt });
 };
+
+// Runs the recovery as the real CLI in its own process, so the test can end it at the budget and
+// await its exit before teardown. The child writes state, so no test-side timeout leaves it running.
+// Process: the case already runs one real dispatch; this is the second entry point, and it lets the
+// test meet the budget without a late state write.
+async function recoveryCall(repo, tmpRoot, budgetMs) {
+  const runner = [
+    `import { main } from ${JSON.stringify(pathToFileURL(ROLE).href)};`,
+    "await main(process.argv.slice(1));",
+  ].join("\n");
+  const args = dispatchArgv().map((value) => (value === "<repo>" ? repo : value));
+  const child = spawn(process.execPath, ["--input-type=module", "-e", runner, "--", ...args], {
+    cwd: repo,
+    stdio: ["ignore", "pipe", "ignore"],
+    env: { ...process.env, TMPDIR: tmpRoot, TEMP: tmpRoot, TMP: tmpRoot },
+  });
+  let stdout = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  const closed = new Promise((resolve) => {
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  let timer;
+  const expired = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(true), budgetMs);
+  });
+  try {
+    const timedOut = await Promise.race([closed.then(() => false), expired]);
+    if (timedOut) {
+      child.kill("SIGKILL");
+      await closed;
+      return { timedOut: true, code: null, stdout };
+    }
+    return { timedOut: false, ...(await closed), stdout };
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await closed;
+    }
+  }
+}
 
 // Runs another role operation on the run in `repo`, under the temporary root of its killed
 // dispatch, so a re-check of the kept turn directory meets the record origin check.
@@ -575,29 +615,26 @@ test(
       expect(existsSync(turnDir), check()).toBe(true);
 
       // The identity read time is already spent from this budget. The recovery gets what remains,
-      // less a reserve for the state read, and the signal stops it before a late state write.
+      // less a reserve for the state read, and it runs in a process the test ends and awaits.
       const recoveryBudget = recoveryBudgetMs() - STATE_READ_RESERVE_MS;
       if (recoveryBudget <= 0) {
         throw new Error("the recovery budget is exhausted");
       }
-      const controller = new AbortController();
-      const budgetTimer = setTimeout(() => controller.abort(), recoveryBudget);
-      let next;
-      let state;
-      try {
-        const recovery = nextCall(repo, tmpRoot, controller.signal);
-        recovery.catch(() => {});
-        next = await within(recovery, recoveryBudget, "the recovery call");
-        const stateRead = readRepoState(repo);
-        stateRead.catch(() => {});
-        const readBudget = Math.min(STATE_READ_BOUND_MS, recoveryBudgetMs());
-        if (readBudget <= 0) {
-          throw new Error("the state-read budget is exhausted");
-        }
-        state = await within(stateRead, readBudget, "the state read");
-      } finally {
-        clearTimeout(budgetTimer);
+      const recovered = await recoveryCall(repo, tmpRoot, recoveryBudget);
+      if (recovered.timedOut) {
+        throw new Error(`the recovery call did not finish within ${recoveryBudget} ms`);
       }
+      const next = {
+        exitCode: recovered.code,
+        payload: JSON.parse(recovered.stdout.trim().split("\n").at(-1)),
+      };
+      const stateRead = readRepoState(repo);
+      stateRead.catch(() => {});
+      const readBudget = Math.min(STATE_READ_BOUND_MS, recoveryBudgetMs());
+      if (readBudget <= 0) {
+        throw new Error("the state-read budget is exhausted");
+      }
+      const state = await within(stateRead, readBudget, "the state read");
 
       expect(next.exitCode, check()).toBe(1);
       expect(next.payload.error, check()).toContain("interrupted");
