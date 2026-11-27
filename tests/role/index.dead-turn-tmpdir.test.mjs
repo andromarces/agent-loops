@@ -172,9 +172,11 @@ setTimeout(() => process.exit(0), 60000);
 /**
  * Starts a real `role dispatch` whose Codex turn hangs and kills the dispatch with SIGKILL mid-turn,
  * once the state file holds the child of the turn. The orphaned fake `codex` is ended unless
- * `keepChild` is set, and teardown ends it either way. Returns the work tree, the temporary
- * directory of the turn (as the turn child saw it), the temporary root that holds it, and the pid
- * of the fake `codex`.
+ * `keepChild` is set, and teardown ends it either way. Waits, with a bound, until the killed
+ * dispatch and its recorded child no longer read as live, because the next call reads both as a
+ * lock owner and as a child of the dead turn. Returns the work tree, the temporary directory of the
+ * turn (as the turn child saw it), the temporary root that holds it, the pid of the fake `codex`,
+ * and the time of the kill.
  */
 async function killedDispatch({
   keepChild = false,
@@ -243,25 +245,47 @@ async function killedDispatch({
     },
   );
   dispatches.push(child);
-  const exited = new Promise((resolve) => child.once("exit", resolve));
+  let dispatcherExited = false;
+  child.once("exit", () => {
+    dispatcherExited = true;
+  });
   let turn;
+  let recordedChildPid;
   await vi.waitFor(
     async () => {
       turn = JSON.parse(await readFile(report, "utf8").catch(() => "null"));
       expect(turn?.pid).toBeGreaterThan(0);
       // The dispatch has recorded the child, so the kill leaves the record a recovery reads.
       const state = await readRepoState(repo).catch(() => null);
-      expect(state?.lastDispatch?.turnTmpdir?.child?.pid).toBeGreaterThan(0);
+      recordedChildPid = state?.lastDispatch?.turnTmpdir?.child?.pid;
+      expect(recordedChildPid).toBeGreaterThan(0);
     },
     { timeout: startupMs, interval: 100 },
   );
+  const killedAt = Date.now();
   child.kill("SIGKILL");
-  await exited;
-  if (!keepChild) {
-    if (processExists(turn.pid)) process.kill(turn.pid, "SIGKILL");
-    await vi.waitFor(() => expect(processExists(turn.pid)).toBe(false), { timeout: 5000 });
+  if (!keepChild && processExists(turn.pid)) {
+    try {
+      process.kill(turn.pid, "SIGKILL");
+    } catch {
+      // The child ended between the check and the signal; the bounded wait below confirms it.
+    }
   }
-  return { repo, turnDir: turn.dir, tmpRoot, childPid: turn.pid };
+  // Windows keeps a killed process in the process table while a handle to it is open. The next call
+  // reads the dispatch pid as the state-lock owner and the recorded child as the child of the dead
+  // turn, so either one that still looks live refuses the lock or keeps the turn directory. The
+  // dispatcher exit waits in the same bound, so a late exit event cannot hold the case past it.
+  const gone = keepChild ? [child.pid] : [child.pid, turn.pid, recordedChildPid];
+  await vi.waitFor(
+    () => {
+      expect(
+        { exited: dispatcherExited, live: gone.filter((pid) => processExists(pid)) },
+        `the turn directory is ${existsSync(turn.dir) ? "present" : "absent"} ${Date.now() - killedAt} ms after the kill; the killed dispatch has not exited or a killed process still reads as live`,
+      ).toEqual({ exited: true, live: [] });
+    },
+    { timeout: 5000, interval: 50 },
+  );
+  return { repo, turnDir: turn.dir, tmpRoot, childPid: turn.pid, killedAt };
 }
 
 // The recovery call inherits the temporary directory that held the turn directory, as a call of the
@@ -344,16 +368,35 @@ async function keptTurnDir() {
 // Process: this is the one real crash that proves a killed dispatch leaves its turn directory and
 // state record for the next call. Every other case writes that state in process.
 test("the call that marks a killed dispatch interrupted removes its turn directory", async () => {
-  const { repo, turnDir, tmpRoot } = await killedDispatch();
-  expect(existsSync(turnDir)).toBe(true);
+  const { repo, turnDir, tmpRoot, killedAt } = await killedDispatch();
+  // A failure reports the turn directory state and the time from the kill to the check, which the
+  // case log alone does not hold (issue #2038).
+  const check = () =>
+    `the turn directory is ${existsSync(turnDir) ? "present" : "absent"} ${Date.now() - killedAt} ms after the kill`;
+  // Every failure past the kill carries the check, including a failed state-file read.
+  const withCheck = (error) => {
+    const detail = check();
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof Error) {
+      if (!message.includes(detail)) error.message = `${detail}; ${message}`;
+      return error;
+    }
+    return new Error(`${detail}; ${message}`);
+  };
+  try {
+    expect(existsSync(turnDir), check()).toBe(true);
 
-  const next = await nextCall(repo, tmpRoot);
+    const next = await nextCall(repo, tmpRoot);
 
-  expect(next.exitCode).toBe(1);
-  expect(next.payload.error).toContain("interrupted");
-  expect((await readRepoState(repo)).lifecycle).toBe("interrupted");
-  expect(existsSync(turnDir)).toBe(false);
-  expect(readdirSync(tmpRoot)).toEqual([]);
+    expect(next.exitCode, check()).toBe(1);
+    expect(next.payload.error, check()).toContain("interrupted");
+    const state = await readRepoState(repo);
+    expect(state.lifecycle, check()).toBe("interrupted");
+    expect(existsSync(turnDir), check()).toBe(false);
+    expect(readdirSync(tmpRoot), check()).toEqual([]);
+  } catch (error) {
+    throw withCheck(error);
+  }
 }, 60_000);
 
 // Usefulness: verifies issue #1207 acceptance 2, that a recorded directory which is already gone
