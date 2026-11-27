@@ -2,7 +2,20 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+The superseded part is decision 6's clause that the eligibility check excludes an issue by a
+closing reference's number whatever repository it names
+([ADR 0179](0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md)).
+Every other decision, consequence, and alternative stays in force.
+
+## Superseded by
+
+[adr/0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md](0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md)
+partially supersedes this ADR. The replaced part is decision 6's clause that the eligibility check
+keeps excluding an issue by a closing reference's number whatever repository it names. The
+eligibility check now admits the issue when the only such reference names another repository. Every
+other decision, consequence, and alternative stays in force.
 
 ## Date
 

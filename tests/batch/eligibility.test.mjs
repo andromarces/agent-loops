@@ -421,14 +421,14 @@ test("a closing keyword in a commit message is read", async () => {
   expect(closures.incompletePr).toBe(null);
 });
 
-/** The gh double of a closure read over `entries` on repository `o/r`, with default branch `main`. */
-function closureGh(entries, { defaultBranch = "main" } = {}) {
+/** The gh double of a closure read over `entries` on a repository with default branch `main`. */
+function closureGh(entries, { defaultBranch = "main", nameWithOwner = "o/r" } = {}) {
   return (args) => {
     if (args[0] === "pr" && args[1] === "list") {
       return { status: 0, stdout: JSON.stringify(entries), stderr: "" };
     }
     if (args[0] === "repo" && args[1] === "view") {
-      const reply = { nameWithOwner: "o/r" };
+      const reply = { nameWithOwner };
       if (defaultBranch !== null) reply.defaultBranchRef = { name: defaultBranch };
       return { status: 0, stdout: JSON.stringify(reply), stderr: "" };
     }
@@ -640,10 +640,10 @@ test("a default-base entry with a non-string body fails closed", async () => {
   await expect(readOpenPrClosures({ gh, repo: "C:\\repo" })).rejects.toThrow();
 });
 
-// Usefulness: issue #2049 review — eligibility keeps main's rule: a closing reference excludes the
-// issue by its number, whatever repository it names. Not redundant: it names the foreign
-// same-number exclusion that the delivery check must not mirror.
-test("a foreign same-number closing reference still closes the issue for eligibility", async () => {
+// Usefulness: issue #2052 — an open pull request whose only closing reference names another
+// repository with the same issue number leaves the local issue eligible. Not redundant: it is the
+// only check that a foreign identity stops excluding the local issue.
+test("a foreign same-number closing reference does not close the issue", async () => {
   const closures = await readOpenPrClosures({
     gh: closureGh([
       {
@@ -656,7 +656,7 @@ test("a foreign same-number closing reference still closes the issue for eligibi
     ]),
     repo: "C:/repo",
   });
-  expect([...closures.closed]).toEqual([9]);
+  expect([...closures.closed]).toEqual([]);
   const result = await checkEligibility({
     issue: 9,
     gh: issueReply("OPEN"),
@@ -664,5 +664,85 @@ test("a foreign same-number closing reference still closes the issue for eligibi
     claim: { exists: false },
     openPrClosures: closures,
   });
-  expect(result).toMatchObject({ ok: false, reason: "closed-by-open-pr" });
+  expect(result).toMatchObject({ ok: true });
+});
+
+// Usefulness: a closing reference with no repository identity keeps the exclusion, the safe
+// direction that issue #2052 leaves unchanged.
+test("a closing reference with no repository identity still closes the issue", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh([
+      {
+        number: 15,
+        headRefName: "a",
+        closingIssuesReferences: [{ number: 9 }],
+        baseRefName: "main",
+        body: "",
+      },
+    ]),
+    repo: "C:/repo",
+  });
+  expect([...closures.closed]).toEqual([9]);
+});
+
+// Usefulness: an identity that does not split into owner and name cannot be compared, so it keeps
+// the exclusion.
+test("a closing reference whose identity does not split still closes the issue", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh([
+      {
+        number: 15,
+        headRefName: "a",
+        closingIssuesReferences: [{ number: 9, repository: { nameWithOwner: "other/repo/extra" } }],
+        baseRefName: "main",
+        body: "",
+      },
+    ]),
+    repo: "C:/repo",
+  });
+  expect([...closures.closed]).toEqual([9]);
+});
+
+// Usefulness: a same-repository identity with a managed-user style owner that differs only by case
+// still excludes the issue, as the delivery check compares it.
+test("a same-repository managed-user owner still closes the issue", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh(
+      [
+        {
+          number: 15,
+          headRefName: "a",
+          closingIssuesReferences: [
+            { number: 9, repository: { nameWithOwner: "MONA-CAT_OCTO/Repo" } },
+          ],
+          baseRefName: "main",
+          body: "",
+        },
+      ],
+      { nameWithOwner: "mona-cat_octo/repo" },
+    ),
+    repo: "C:/repo",
+  });
+  expect([...closures.closed]).toEqual([9]);
+});
+
+// Usefulness: one same-repository reference keeps the exclusion for a number that a foreign
+// reference of the same pull request also names.
+test("a same-repository reference keeps the exclusion beside a foreign one", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh([
+      {
+        number: 15,
+        headRefName: "a",
+        closingIssuesReferences: [
+          { number: 9, repository: { nameWithOwner: "other/repo" } },
+          { number: 9, repository: { nameWithOwner: "o/r" } },
+        ],
+        baseRefName: "main",
+        body: "",
+      },
+    ]),
+    repo: "C:/repo",
+  });
+  expect([...closures.closed]).toEqual([9]);
 });

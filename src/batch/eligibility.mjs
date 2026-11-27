@@ -383,6 +383,14 @@ function repositoryParts(value) {
   return parts.length === 2 ? parts : null;
 }
 
+/** Whether two owner and name pairs match without case. */
+function sameRepository(named, target) {
+  return (
+    named[0].toLowerCase() === target[0].toLowerCase() &&
+    named[1].toLowerCase() === target[1].toLowerCase()
+  );
+}
+
 /**
  * Whether one closing reference names `repository`: true when its readable identity equals it
  * without case, false when its identity names anything else, and null when the entry holds no
@@ -395,18 +403,29 @@ function referenceClosesIssue(reference, repository) {
   const named = repositoryParts(identity);
   const target = repositoryParts(repository.nameWithOwner);
   if (named === null || target === null) return false;
-  return (
-    named[0].toLowerCase() === target[0].toLowerCase() &&
-    named[1].toLowerCase() === target[1].toLowerCase()
-  );
+  return sameRepository(named, target);
+}
+
+/**
+ * Whether one closing reference names a repository other than `repository`: true when its identity
+ * is present, splits into owner and name, and differs from `repository` by either part without
+ * case. A missing or unsplittable identity names no other repository, so its number stays excluded.
+ */
+function referenceNamesOtherRepository(reference, repository) {
+  const identity = referenceRepository(reference);
+  if (identity === null) return false;
+  const named = repositoryParts(identity);
+  const target = repositoryParts(repository.nameWithOwner);
+  if (named === null || target === null) return false;
+  return !sameRepository(named, target);
 }
 
 /**
  * The issue numbers that one pull request closes in `repository`, from its closing references, its
  * body keywords when its base is not the default branch, and its commit messages. `referenced`
- * holds every reference number, whatever repository it names, which is the eligibility rule.
- * `closed` holds the references whose repository is `repository` without case, plus the body and
- * commit numbers. `unreadable` holds the reference numbers whose repository identity is missing,
+ * holds every reference number, whatever repository it names. `closed` holds the references whose
+ * repository is `repository` without case, plus the body and commit numbers. `unreadable` holds
+ * the reference numbers whose repository identity is missing,
  * so the delivery check can fail closed. `incomplete` is true when the commit read reached the
  * API's 250-commit page, so an absent issue is not proven absent.
  * @returns {Promise<{ referenced: Set<number>, closed: Set<number>, unreadable: Set<number>, incomplete: boolean }>}
@@ -552,9 +571,15 @@ export async function readOpenPrClosures({ gh, repo, repository = null }) {
       baseRefName: entry.baseRefName,
       repository: cached,
     });
-    // Eligibility keeps main's rule: a closing reference excludes its issue by number, whatever
-    // repository it names. Only the delivery check compares repository identities.
-    for (const issueNumber of [...closures.referenced, ...closures.closed]) {
+    // Eligibility excludes a closing reference's issue by number, except a reference whose readable
+    // identity names another repository (ADR 0179).
+    for (const reference of entry.closingIssuesReferences ?? []) {
+      if (!Number.isInteger(reference?.number)) continue;
+      if (referenceNamesOtherRepository(reference, cached)) continue;
+      closed.add(reference.number);
+      addSource(reference.number, entry);
+    }
+    for (const issueNumber of closures.closed) {
       closed.add(issueNumber);
       addSource(issueNumber, entry);
     }
