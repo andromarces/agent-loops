@@ -58,15 +58,19 @@ covers a different question: which pull requests need combined validation.
    reads it.
 6. The evidence is the same set that the eligibility check reads, through the shared helpers in
    `src/batch/eligibility.mjs`: the pull request's closing references, its body keywords when its
-   base is not the default branch, and its commit messages. One `gh pr view` read names the
-   references, body, and base, and the paginated commit read names the commit messages. The
-   repository identity is read once per command and shared by every delivery check. The success
-   checkpoint records the fact in the same write as its status and report, so the marker never
-   depends on a later read.
-7. A failed call, a reply without a closing reference list, and a commit list that reaches the
-   API's 250-commit page without naming the issue are all unreadable evidence. Each logs one
-   warning and records `null`, which reads as `closing-reference-unread`. An unreadable read never
-   reads as delivered, never fails the batch, and never changes an exit code.
+   base is not the default branch, and its commit messages. A closing reference counts only when
+   its repository is the batch repository, compared by owner and name without case, so another
+   repository's `#42` never closes local issue 42. One `gh pr view` read names the references,
+   body, and base, and the paginated commit read names the commit messages. The repository identity
+   is read once per command and shared by every delivery check. The success checkpoint records the
+   fact in the same write as its status and report, so the marker never depends on a later read.
+7. A failed call, a reply without a closing reference list, a closing reference whose repository
+   identity is missing or unreadable, and a commit list that reaches the API's 250-commit page
+   without naming the issue are all unreadable evidence. Each logs one warning and records
+   `null`, which reads as `closing-reference-unread`. An unreadable read never reads as delivered,
+   never fails the batch, and never changes an exit code. The eligibility check keeps excluding an
+   issue whose closing reference names no readable repository, as it did before this ADR: only a
+   readable reference to another repository stops counting as a closure.
 8. `batch status` reports `completion.complete: false` while any loop entry is partial. The
    completion block keeps the stored batch status, so a partial delivery never reads as fully
    delivered and the batch status itself stays as it was. This replaces the `complete` rule of
@@ -80,6 +84,8 @@ covers a different question: which pull requests need combined validation.
   each loop's report.
 - An issue loop that succeeds with no pull request is named as partial, because it holds no
   delivery evidence.
+- A closing reference to another repository, and a reference whose repository identity is
+  unreadable, are never read as a closure of the local issue.
 - A loop whose finish summary reports work not done is named even when its pull request closes the
   issue, and a loop whose pull request does not close its issue is named even when its summary
   reports `notDone: none`.

@@ -155,13 +155,19 @@ async function ownerStillLive(loop, cache) {
  */
 async function pullRequestClosesIssue({ gh, repo, issue, pr, repository }) {
   try {
-    const { closed, incomplete } = await readPullRequestClosingNumbers({
+    const { closed, unreadable, incomplete } = await readPullRequestClosingNumbers({
       gh,
       repo,
       number: pr,
       repository: await repository(),
     });
     if (closed.has(issue)) return true;
+    if (unreadable.has(issue)) {
+      logWarn(
+        `issue ${issue}: the closing-reference read of pull request ${pr} names issue ${issue} with no readable repository`,
+      );
+      return null;
+    }
     if (incomplete) {
       logWarn(
         `issue ${issue}: the closing-reference read of pull request ${pr} reached the 250-commit page`,

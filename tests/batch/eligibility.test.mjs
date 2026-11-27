@@ -639,3 +639,50 @@ test("a default-base entry with a non-string body fails closed", async () => {
   ]);
   await expect(readOpenPrClosures({ gh, repo: "C:\\repo" })).rejects.toThrow();
 });
+
+// Usefulness: issue #2049 review — a closing reference that names another repository does not
+// exclude the local issue from eligibility, so another repository's #9 never reads as this
+// repository's #9. Not redundant: the other closure cases name no repository.
+test("a cross-repository closing reference does not close the local issue", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh([
+      {
+        number: 15,
+        headRefName: "a",
+        closingIssuesReferences: [{ number: 9, repository: { nameWithOwner: "other/repo" } }],
+        baseRefName: "main",
+        body: "",
+      },
+    ]),
+    repo: "C:\\repo",
+  });
+  expect([...closures.closed]).toEqual([]);
+  const result = await checkEligibility({
+    issue: 9,
+    gh: issueReply("OPEN"),
+    repo: "C:\\repo",
+    claim: { exists: false },
+    openPrClosures: closures,
+  });
+  expect(result.ok).toBe(true);
+});
+
+// Usefulness: issue #2049 review — a closing reference whose repository identity is missing stays
+// closed for eligibility, as on main, while the delivery check reads it as unverified. Not
+// redundant: it names the fail-closed rule for an unreadable identity apart from the cross-repo
+// case.
+test("a closing reference with no readable repository keeps the issue closed for eligibility", async () => {
+  const closures = await readOpenPrClosures({
+    gh: closureGh([
+      {
+        number: 15,
+        headRefName: "a",
+        closingIssuesReferences: [{ number: 9 }],
+        baseRefName: "main",
+        body: "",
+      },
+    ]),
+    repo: "C:\\repo",
+  });
+  expect([...closures.closed]).toEqual([9]);
+});

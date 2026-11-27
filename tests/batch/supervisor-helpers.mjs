@@ -67,7 +67,11 @@ export function fakeGh({
         status: 0,
         stdout: JSON.stringify({
           number,
-          closingIssuesReferences: (references ?? []).map((issue) => ({ number: issue })),
+          closingIssuesReferences: (references ?? []).map((entry) =>
+            typeof entry === "number"
+              ? { number: entry, repository: { nameWithOwner: "o/r" } }
+              : entry,
+          ),
           body: body ?? "",
           baseRefName: closureBase.get(number) ?? "main",
         }),

@@ -363,12 +363,42 @@ export async function readRepositoryIdentity({ gh, repo }) {
   return { nameWithOwner: view.nameWithOwner, defaultBranch: view.defaultBranchRef.name };
 }
 
+/** The `owner/name` of a closing-reference repository, or null when the entry names none. */
+function referenceRepository(reference) {
+  const value = reference?.repository;
+  if (typeof value?.nameWithOwner === "string") return value.nameWithOwner;
+  if (typeof value?.owner?.login === "string" && typeof value?.name === "string") {
+    return `${value.owner.login}/${value.name}`;
+  }
+  return null;
+}
+
+/** The lower-cased owner and name of an `owner/name` value, or null when it is not one. */
+function repositoryParts(value) {
+  const match = /^([^/]+)\/([^/]+)$/.exec(value);
+  return match === null ? null : [match[1].toLowerCase(), match[2].toLowerCase()];
+}
+
+/**
+ * Whether one closing reference names an issue of `repository`: true when its readable repository
+ * is that repository, false when it names another repository, and null when its repository
+ * identity is missing or unreadable.
+ */
+function referenceClosesIssue(reference, repository) {
+  const named = repositoryParts(referenceRepository(reference));
+  const target = repositoryParts(repository.nameWithOwner);
+  if (named === null || target === null) return null;
+  return named[0] === target[0] && named[1] === target[1];
+}
+
 /**
  * The issue numbers that one pull request closes in `repository`, from its closing references, its
- * body keywords when its base is not the default branch, and its commit messages. `incomplete` is
- * true when the commit read reached the API's 250-commit page, so an absent issue is not proven
- * absent.
- * @returns {Promise<{ closed: Set<number>, incomplete: boolean }>}
+ * body keywords when its base is not the default branch, and its commit messages. A closing
+ * reference counts only when its repository is `repository`, compared without case. `unreadable`
+ * holds the reference numbers whose repository identity is missing or unreadable, so each caller
+ * can fail closed. `incomplete` is true when the commit read reached the API's 250-commit page, so
+ * an absent issue is not proven absent.
+ * @returns {Promise<{ closed: Set<number>, unreadable: Set<number>, incomplete: boolean }>}
  */
 export async function readPullRequestClosures({
   gh,
@@ -380,8 +410,12 @@ export async function readPullRequestClosures({
   repository,
 }) {
   const closed = new Set();
+  const unreadable = new Set();
   for (const reference of references ?? []) {
-    if (Number.isInteger(reference?.number)) closed.add(reference.number);
+    if (!Number.isInteger(reference?.number)) continue;
+    const matches = referenceClosesIssue(reference, repository);
+    if (matches === true) closed.add(reference.number);
+    else if (matches === null) unreadable.add(reference.number);
   }
   if (baseRefName !== repository.defaultBranch) {
     for (const issueNumber of closingIssueNumbers(body, repository.nameWithOwner)) {
@@ -410,13 +444,13 @@ export async function readPullRequestClosures({
     }
     if (commits.length < 100) break;
   }
-  return { closed, incomplete: count >= 250 };
+  return { closed, unreadable, incomplete: count >= 250 };
 }
 
 /**
  * The issue numbers that one pull request closes, from its own closing references, body, base
  * branch, and commit messages. A reply without a closing reference list is unreadable and throws.
- * @returns {Promise<{ closed: Set<number>, incomplete: boolean }>}
+ * @returns {Promise<{ closed: Set<number>, unreadable: Set<number>, incomplete: boolean }>}
  */
 export async function readPullRequestClosingNumbers({ gh, repo, number, repository }) {
   const view = await readGhJson(
@@ -505,7 +539,9 @@ export async function readOpenPrClosures({ gh, repo, repository = null }) {
       baseRefName: entry.baseRefName,
       repository: cached,
     });
-    for (const issueNumber of closures.closed) {
+    // An unreadable repository identity keeps the issue excluded, as main does: only a readable
+    // reference to another repository is no closure.
+    for (const issueNumber of [...closures.closed, ...closures.unreadable]) {
       closed.add(issueNumber);
       addSource(issueNumber, entry);
     }
