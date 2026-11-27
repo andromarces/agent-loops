@@ -89,6 +89,7 @@ covers a different question: which pull requests need combined validation.
 ## Links
 
 - [Issue #2049: Mark a succeeded batch loop whose finish summary reports the item not done](https://github.com/andromarces/agent-loops/issues/2049)
+- [PR #2051: Mark a succeeded batch loop that does not deliver its item](https://github.com/andromarces/agent-loops/pull/2051)
 - [ADR 0106: Run several issue loops in one foreground batch](0106-foreground-batch-scheduling.md)
 - [ADR 0115: Report each loop's final report in the batch summary](0115-batch-loop-final-report.md)
 - [ADR 0131: Name the undeclared pull request of a batch loop](0131-name-the-undeclared-pull-request-of-a-batch-loop.md)
