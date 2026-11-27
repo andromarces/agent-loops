@@ -537,14 +537,15 @@ test("first worker turn bars linking another checkout node_modules into the work
 });
 
 // Usefulness: verifies requirement "a worker probe copy never links a work tree directory into it"
-// (issue #2028): a recursive delete of a copied directory that followed a junction removed the run
-// work tree's `node_modules`. The copy installs its own dependencies or the probe runs inside the
-// work tree.
-test("first worker turn bars a probe copy from linking a work tree directory into it", () => {
+// (issue #2028): a recursive delete of such a copy can follow the junction and remove the run work
+// tree's `node_modules`. The issue records that the worker reported the copies and `node_modules`
+// intact, so the rule also states the link-safe removal of a copy that holds a link.
+test("first worker turn bars a probe copy from linking and states the link-safe removal", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "When a probe copies the repository, for example with `git worktree add` under the turn temporary directory to run old source, install the copy's own dependencies or run the probe inside the work tree. Never link or junction a work tree directory into the copy: a recursive delete of the copy that follows the link removes the work tree's `node_modules`.",
+    "When a probe of old source needs a copy of the repository, run the probe inside the work tree instead, or use a copy under the turn temporary directory, for example a `git worktree add` checkout, without a link or junction to a work tree directory. Never link or junction a work tree directory into the copy. When a copy holds a link or junction, remove it without a recursive delete that follows links: `rmdir /s /q` on Windows or `rm -rf` on POSIX.",
   );
+  expect(prompt).not.toContain("install the copy's own dependencies");
   expect(prompt).toContain(
     "A tool such as `vp` installs into the shared package store when it finds no usable `node_modules`. Every work tree that links the store sees that write.",
   );
