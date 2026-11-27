@@ -31,8 +31,22 @@ export function fakeGh({
   files = new Map(),
   unreadableFiles = new Set(),
   mismatchedFiles = new Set(),
+  closingReferences = new Map(),
 } = {}) {
   return async (args) => {
+    if (args[0] === "pr" && args[1] === "view" && args.includes("closingIssuesReferences")) {
+      const references = closingReferences.get(Number(args[2]));
+      if (references === undefined) {
+        return { status: 1, stdout: "", stderr: `no pull request ${args[2]}` };
+      }
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          closingIssuesReferences: references.map((number) => ({ number })),
+        }),
+        stderr: "",
+      };
+    }
     if (args[0] === "pr" && args[1] === "view" && args.includes("number")) {
       return {
         status: 1,

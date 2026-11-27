@@ -53,7 +53,29 @@ export function queuedLoop(paths, id, item, maxSteps) {
   };
 }
 
+/**
+ * The reasons a succeeded loop reads as partial, or an empty list. A finish summary that reports
+ * the item not done and a pull request that does not close the issue each name one reason
+ * (adr/0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md).
+ * @returns {string[]}
+ */
+function partialReasons(loop) {
+  if (loop?.status !== "succeeded") return [];
+  const reasons = [];
+  const notDone = loop.report?.summary?.notDone;
+  if (
+    typeof notDone === "string" &&
+    notDone.trim() !== "" &&
+    notDone.trim().toLowerCase() !== "none"
+  ) {
+    reasons.push("not-done");
+  }
+  if (loop.pullRequestClosesIssue === false) reasons.push("pull-request-does-not-close-issue");
+  return reasons;
+}
+
 export function loopEntry(loop) {
+  const partial = partialReasons(loop);
   return {
     issue: loop.issue,
     ...(loop.kind !== undefined && loop.kind !== "issue"
@@ -75,5 +97,6 @@ export function loopEntry(loop) {
     decision: loop.decision ?? null,
     blockingIssues: loop.blockingIssues ?? [],
     report: loop.report ?? missingLoopReport(),
+    ...(partial.length === 0 ? {} : { partial: true, partialReasons: partial }),
   };
 }

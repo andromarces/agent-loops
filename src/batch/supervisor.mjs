@@ -7,6 +7,7 @@ import { canonicalPath, samePath } from "../lib/canonical-path.mjs";
 import { DEFAULT_READ_TIMEOUT_MS } from "../lib/checks/gh-api.mjs";
 import { boundedRunner } from "../lib/checks/bounded-call.mjs";
 import { declaredPrFromTranscript, undeclaredPrFromTranscript } from "../lib/gate.mjs";
+import { isJsonObject } from "../lib/json.mjs";
 import { tryStateLock } from "../lib/state-lock.mjs";
 import {
   pidAlive,
@@ -140,6 +141,31 @@ function isLive(loop) {
 async function ownerStillLive(loop, cache) {
   if (!isLive(loop)) return false;
   return ownerAlive({ pid: loop.pid, startTime: loop.startTime }, cache);
+}
+
+/**
+ * Whether one pull request closes its issue, from the closing references that GitHub computes.
+ * Returns undefined for a loop without a pull request number and for a failed or unreadable read:
+ * a monitoring read never marks a succeeded loop and never fails the batch
+ * (adr/0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md).
+ * @returns {Promise<boolean | undefined>}
+ */
+async function pullRequestClosesIssue({ gh, repo, issue, pr }) {
+  if (!Number.isInteger(pr)) return undefined;
+  try {
+    const view = await readGhJson(
+      gh,
+      ["pr", "view", String(pr), "--json", "closingIssuesReferences"],
+      repo,
+    );
+    if (!isJsonObject(view) || !Array.isArray(view.closingIssuesReferences)) return undefined;
+    return view.closingIssuesReferences.some((reference) => reference?.number === issue);
+  } catch (err) {
+    logWarn(
+      `issue ${issue}: the closing-reference read of pull request ${pr} failed: ${err?.message ?? err}`,
+    );
+    return undefined;
+  }
 }
 
 /**
@@ -833,6 +859,19 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
     { stepsUsed, remainingSteps, pr, prUndeclared, transcript },
   ) => {
     const recordedPr = pr ?? loop.pr;
+    // The success checkpoint carries its report and the closing-reference fact in one write, so
+    // the partial marker never depends on a later read
+    // (adr/0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md).
+    const options = { attempts: loop.attempts, reviewOnly: loop.mode === "review-only" };
+    const report =
+      transcript === undefined
+        ? await readLoopReport(loop.transcript, options)
+        : loopReportFromRead(transcript, options);
+    const closurePr = recordedPr ?? prUndeclared ?? loop.prUndeclared ?? null;
+    const closesIssue =
+      loop.kind === "issue"
+        ? await pullRequestClosesIssue({ gh, repo: manifest.repo, issue, pr: closurePr })
+        : undefined;
     await changeLoop(
       issue,
       {
@@ -845,6 +884,8 @@ async function runBatchWithListeners({ prepared, runsRoot, gh, deps = {} }, run)
         prUndeclared: recordedPr == null ? recordedUndeclared(prUndeclared, loop) : null,
         pid: null,
         startTime: null,
+        report,
+        ...(closesIssue === undefined ? {} : { pullRequestClosesIssue: closesIssue }),
       },
       { transcript },
     );

@@ -1256,3 +1256,100 @@ test("a link at the derived default root is never removed or followed", async ()
     await cleanupRepo();
   }
 });
+
+const summaryOf = (notDone) => ({
+  changed: "a",
+  verified: "b",
+  deferred: "none",
+  notDone,
+  open: "none",
+});
+
+// Runs issues 1 and 2, one child double each, and returns the summary and the status read.
+async function runTwo(options, gh = fakeGh()) {
+  const prepared = await waitPrepared([1, 2]);
+  const runsRoot = join(prepared.workTreeRoot, "runs");
+  const children = options.map((option) => childDouble(option));
+  const spawn = (call) => {
+    const next = children.find((child) => child.calls.length === 0) ?? children[0];
+    return next.spawn(call);
+  };
+  try {
+    const run = await runBatch({
+      prepared,
+      runsRoot,
+      gh,
+      deps: { ...fakeGitDeps, notifier: noNotify, spawn, installSignal: false },
+    });
+    return { summary: run.summary, status: await readBatchStatus({ runsRoot, id: prepared.id }) };
+  } finally {
+    await cleanupRepo();
+  }
+}
+
+// Usefulness: issue #2049 — a succeeded loop whose own finish summary reports the item not done is
+// named partial in the summary and in batch status, and the batch does not read as fully
+// delivered. Not redundant: no other test covers the partial marker of a loop entry.
+test("a succeeded loop whose finish summary reports the item not done is marked partial", async () => {
+  const notDone = "the issue is not fixed and the pull request does not close it";
+  const { summary, status } = await runTwo([
+    { pr: 11, summary: summaryOf(notDone) },
+    { pr: 12, summary: summaryOf("none") },
+  ]);
+
+  expect(summary.status).toBe("completed");
+  expect(summary.loops[0]).toMatchObject({
+    status: "succeeded",
+    partial: true,
+    partialReasons: ["not-done"],
+  });
+  expect(summary.loops[1].partial).toBeUndefined();
+  expect(status.loops[0]).toMatchObject({
+    status: "succeeded",
+    partial: true,
+    partialReasons: ["not-done"],
+  });
+  expect(status.loops[1].partial).toBeUndefined();
+  expect(status.completion).toEqual({ status: "completed", complete: false });
+});
+
+// Usefulness: issue #2049 — a batch whose loops all report notDone none shows no marker and keeps
+// its completion flag. Not redundant: it guards against marking every succeeded loop.
+test("a batch whose loops all report notDone none shows no partial marker", async () => {
+  const { summary, status } = await runTwo([
+    { pr: 11, summary: summaryOf("none") },
+    { pr: 12, summary: summaryOf("none") },
+  ]);
+
+  expect(summary.loops.map((loop) => loop.partial)).toEqual([undefined, undefined]);
+  expect(status.loops.map((loop) => loop.partial)).toEqual([undefined, undefined]);
+  expect(status.completion).toEqual({ status: "completed", complete: true });
+});
+
+// Usefulness: issue #2049 — a succeeded issue loop whose pull request closes another issue is
+// named partial, apart from the loop whose pull request closes its own issue. Not redundant: it
+// covers the closing-reference read that the report alone cannot give.
+test("a succeeded loop whose pull request does not close its issue is marked partial", async () => {
+  const { summary, status } = await runTwo(
+    [
+      { pr: 11, summary: summaryOf("none") },
+      { pr: 12, summary: summaryOf("none") },
+    ],
+    fakeGh({
+      closingReferences: new Map([
+        [11, [99]],
+        [12, [2]],
+      ]),
+    }),
+  );
+
+  expect(summary.status).toBe("completed");
+  expect(summary.loops[0]).toMatchObject({
+    status: "succeeded",
+    partial: true,
+    partialReasons: ["pull-request-does-not-close-issue"],
+  });
+  expect(summary.loops[1].partial).toBeUndefined();
+  expect(status.loops[0].partial).toBe(true);
+  expect(status.completion).toEqual({ status: "completed", complete: false });
+});

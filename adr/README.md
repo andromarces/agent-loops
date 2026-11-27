@@ -134,3 +134,4 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0174 — [Forbid a reviewer probe copy from linking into the work tree](0174-forbid-a-reviewer-probe-copy-from-linking-into-the-work-tree.md) — accepted
 - 0175 — [Treat the OpenCode pty daemon folder as an expected literal temporary directory entry](0175-treat-the-opencode-pty-daemon-folder-as-an-expected-literal-temporary-directory-entry.md) — accepted
 - 0176 — [Report batch pull requests that change the same files](0176-report-batch-pull-requests-that-change-the-same-files.md) — accepted
+- 0178 — [Mark a succeeded loop that does not deliver its item](0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md) — accepted
