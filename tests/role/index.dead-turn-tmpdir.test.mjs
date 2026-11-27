@@ -1,4 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   existsSync,
   lstatSync,
@@ -29,8 +31,10 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
+import { ownerAlive, processStartTime } from "../../src/lib/process-identity.mjs";
 import { readProcessCommands, readProcessTable } from "../../src/lib/process-ancestry.mjs";
 import { statePaths } from "../../src/lib/runstate.mjs";
+import { lockHeld, readLockOwner } from "../../src/lib/state-lock.mjs";
 import { withTurnTmpdir } from "../../src/lib/turn-tmpdir.mjs";
 import { executeRoleCommand } from "../../src/role/index.mjs";
 import {
@@ -48,6 +52,7 @@ import {
 } from "./helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
 import { deadPid, processExists } from "../process-helpers.mjs";
+import { within } from "../wait-helpers.mjs";
 
 const newRunRepo = () => newCleanRunRepo(gitDouble);
 
@@ -74,6 +79,9 @@ const scratches = [];
 const dispatches = [];
 // A live child that a case records as the child of a dead turn, so teardown ends it too.
 const children = [];
+// The fake `codex` pid and start time of each `killedDispatch` scratch, so teardown can narrow
+// pid reuse. An unread identity falls back to main's pid-only cleanup.
+const fakeStarts = new Map();
 
 /** Starts a live node process, to stand as the child of a dead turn. */
 function liveChild() {
@@ -126,7 +134,9 @@ async function endTree(child) {
 }
 
 // Ends every spawned dispatcher and every fake `codex`, on every path of a test, a startup timeout
-// included: the tree of a live dispatcher first, then the pid that each fake wrote on its own.
+// included: the tree of a live dispatcher first, then each fake by main's pid-only cleanup. When a
+// start time was recorded, the signal waits for that identity; an unread identity falls back to
+// the pid-only cleanup.
 async function endSpawned() {
   for (const child of dispatches.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
@@ -136,8 +146,28 @@ async function endSpawned() {
     }
   }
   for (const dir of scratches) {
-    const pid = await fakePid(dir);
-    if (pid !== null && processExists(pid)) process.kill(pid, "SIGKILL");
+    const fake = fakeStarts.get(dir);
+    fakeStarts.delete(dir);
+    if (fake === undefined) {
+      // Main's cleanup for a fake whose pid was written but whose identity was never recorded.
+      const pid = await fakePid(dir);
+      if (pid !== null && processExists(pid)) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // The fake ended between the check and the signal.
+        }
+      }
+      continue;
+    }
+    const signal = fake.startTime === undefined ? processExists(fake.pid) : await ownerAlive(fake);
+    if (signal) {
+      try {
+        process.kill(fake.pid, "SIGKILL");
+      } catch {
+        // The fake ended between the check and the signal.
+      }
+    }
   }
   for (const child of children.splice(0)) {
     if (processExists(child.pid)) child.kill("SIGKILL");
@@ -169,22 +199,147 @@ setInterval(() => {}, 1000);
 setTimeout(() => process.exit(0), 60000);
 `;
 
+// The killed-turn wait keeps main's 5 s bound and 50 ms poll. The state read after the kill is a
+// read only, so it has its own bound; the recovery call is awaited to completion, so no work of it
+// survives teardown.
+const DEAD_TURN_WAIT_MS = 5000;
+const DEAD_TURN_POLL_MS = 50;
+const STATE_READ_BOUND_MS = 5000;
+// The case's own timeout and the margin kept to report a budget failure before it.
+const CASE_TIMEOUT_MS = 60_000;
+const CASE_MARGIN_MS = 2000;
+const STATE_READ_RESERVE_MS = 1000;
+
+/** Races one liveness read against the time left in the wait, without a loose rejection. */
+function readLiveness(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise.then(
+      (value) => ({ value }),
+      (error) => ({ error: error instanceof Error ? error.message : String(error) }),
+    ),
+    new Promise((resolve) => {
+      const bound = Math.max(0, ms);
+      timer = setTimeout(
+        () => resolve({ error: `${label} did not finish within ${Math.round(bound)} ms` }),
+        bound,
+      );
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * The liveness of the killed turn: `lockHeld` for the state lock, and `ownerAlive` with the
+ * recorded start time for each child. The reads carry no cache, so each poll applies the same
+ * fresh read that lock acquisition uses. Each read is bounded by `boundMs`.
+ */
+async function readTurnLiveness({ lockFile, lockPid, child, fake }, boundMs) {
+  const [lock, childAlive, fakeAlive] = await Promise.all([
+    readLiveness(lockHeld(lockFile), boundMs, `the state lock read for pid ${lockPid ?? "none"}`),
+    readLiveness(ownerAlive(child), boundMs, `the child liveness read for pid ${child.pid}`),
+    readLiveness(ownerAlive(fake), boundMs, `the fake codex liveness read for pid ${fake.pid}`),
+  ]);
+  return { lock, child: childAlive, fake: fakeAlive };
+}
+
+// The pids, recorded start times, liveness reads, and elapsed time of a killed-turn failure.
+function describeTurn(
+  { turnDir, lockPid, lockStartTime, child, fake, identityMs },
+  reads,
+  dispatcherExited,
+  elapsedMs,
+) {
+  const status = (read) =>
+    read === undefined
+      ? "not read"
+      : read.error !== undefined
+        ? `not read (${read.error})`
+        : read.value
+          ? "alive"
+          : "gone";
+  const identityRead = identityMs === undefined ? "not recorded" : `${Math.round(identityMs)} ms`;
+  return (
+    `the turn directory is ${existsSync(turnDir) ? "present" : "absent"} ${Math.round(elapsedMs)} ms after the kill; ` +
+    `at the wait, state lock owner pid ${lockPid ?? "none"} (start time ${lockStartTime ?? "unknown"}) ${status(reads?.lock)}; ` +
+    `child pid ${child.pid} (start time ${child.startTime ?? "unknown"}) ${status(reads?.child)}; ` +
+    `fake codex pid ${fake.pid} (start time ${fake.startTime ?? "unknown"}, identity read ${identityRead}) ${status(reads?.fake)}; ` +
+    `dispatcher ${dispatcherExited ? "exited" : "not exited"}`
+  );
+}
+
+/**
+ * Waits, with one bound, until the killed turn reads gone by the rule the next call uses. It starts
+ * no read at or after the deadline. `reads`, `now`, and `sleep` are injectable so a test drives
+ * the wait itself. Resolves with the last reads; rejects with the pids, the reads, and the elapsed
+ * time.
+ */
+async function waitForKilledTurn(
+  turn,
+  {
+    dispatcherExited,
+    waitForFake = true,
+    boundMs = DEAD_TURN_WAIT_MS,
+    budgetMs = boundMs,
+    pollMs = DEAD_TURN_POLL_MS,
+    reads = readTurnLiveness,
+    now = () => performance.now(),
+    sleep = delay,
+  } = {},
+) {
+  const effectiveBoundMs = Math.min(boundMs, budgetMs);
+  const startedAt = now();
+  const deadline = startedAt + effectiveBoundMs;
+  const elapsed = () => now() - startedAt;
+  let last;
+  for (;;) {
+    if (now() >= deadline) {
+      throw new Error(
+        `${describeTurn(turn, last, dispatcherExited(), elapsed())}; the wait reached its ${effectiveBoundMs} ms bound before the turn was gone`,
+      );
+    }
+    last = await reads(turn, deadline - now());
+    const finishedAt = now();
+    const gone =
+      dispatcherExited() &&
+      last.lock.value === false &&
+      last.child.value === false &&
+      (!waitForFake || last.fake.value === false);
+    if (gone) {
+      if (finishedAt <= deadline) {
+        return last;
+      }
+      throw new Error(
+        `${describeTurn(turn, last, dispatcherExited(), elapsed())}; the wait passed after its ${effectiveBoundMs} ms bound`,
+      );
+    }
+    if (finishedAt >= deadline) {
+      throw new Error(
+        `${describeTurn(turn, last, dispatcherExited(), elapsed())}; the killed turn still reads as live`,
+      );
+    }
+    await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
+  }
+}
+
 /**
  * Starts a real `role dispatch` whose Codex turn hangs and kills the dispatch with SIGKILL mid-turn,
  * once the state file holds the child of the turn. The orphaned fake `codex` is ended unless
  * `keepChild` is set, and teardown ends it either way. Waits, with a bound, until the killed
- * dispatch and its recorded child no longer read as live, because the next call reads both as a
- * lock owner and as a child of the dead turn. Returns the work tree, the temporary directory of the
- * turn (as the turn child saw it), the temporary root that holds it, the pid of the fake `codex`,
- * and the time of the kill.
+ * dispatch and its recorded child no longer read as live by the rule that the state lock and the
+ * turn removal use, because the next call reads both as a lock owner and as a child of the dead
+ * turn. Returns the work tree, the temporary directory of the turn (as the turn child saw it), the
+ * temporary root that holds it, the pid of the fake `codex`, the time of the kill, and a function
+ * that reports the pids, liveness reads, and elapsed time of a later failure.
  */
 async function killedDispatch({
   keepChild = false,
   startupMs = 30_000,
   reportDelayMs = 0,
   startDelayMs = 0,
+  deadline = Infinity,
 } = {}) {
   const repo = await newRealRunRepo();
+  const { lockFile } = statePaths({ cwd: repo });
   const scratch = await mkdtemp(join(tmpdir(), "dead-turn-"));
   scratches.push(scratch);
   const bin = join(scratch, "bin");
@@ -250,42 +405,69 @@ async function killedDispatch({
     dispatcherExited = true;
   });
   let turn;
-  let recordedChildPid;
+  let recordedChild;
   await vi.waitFor(
     async () => {
       turn = JSON.parse(await readFile(report, "utf8").catch(() => "null"));
       expect(turn?.pid).toBeGreaterThan(0);
       // The dispatch has recorded the child, so the kill leaves the record a recovery reads.
       const state = await readRepoState(repo).catch(() => null);
-      recordedChildPid = state?.lastDispatch?.turnTmpdir?.child?.pid;
-      expect(recordedChildPid).toBeGreaterThan(0);
+      recordedChild = state?.lastDispatch?.turnTmpdir?.child;
+      expect(recordedChild?.pid).toBeGreaterThan(0);
     },
     { timeout: startupMs, interval: 100 },
   );
+  // The lock owner is the dispatcher, and the fake codex is the child of the turn. Both start
+  // times are read before the kill, so the wait can apply the same rule as the state lock.
+  const lockOwner = await readLockOwner(lockFile);
+  // The identity query runs before the kill, so it cannot extend the post-kill wait. Its elapsed
+  // time is part of every later failure report.
+  const identityStartedAt = performance.now();
+  const fakeStartTime = (await processStartTime(turn.pid)) ?? undefined;
+  const identityMs = performance.now() - identityStartedAt;
+  const fake = { pid: turn.pid, startTime: fakeStartTime };
+  fakeStarts.set(scratch, fake);
   const killedAt = Date.now();
   child.kill("SIGKILL");
+  // Main's cleanup: signal the fake by pid when the dispatcher is killed, whether or not its
+  // recorded identity was read. The recorded start time narrows the teardown signal; an unread
+  // identity falls back to this pid-only cleanup.
   if (!keepChild && processExists(turn.pid)) {
     try {
       process.kill(turn.pid, "SIGKILL");
     } catch {
-      // The child ended between the check and the signal; the bounded wait below confirms it.
+      // The child ended between the check and the signal; the wait below confirms it.
     }
   }
   // Windows keeps a killed process in the process table while a handle to it is open. The next call
-  // reads the dispatch pid as the state-lock owner and the recorded child as the child of the dead
+  // reads the dispatcher pid as the state-lock owner and the recorded child as the child of the dead
   // turn, so either one that still looks live refuses the lock or keeps the turn directory. The
-  // dispatcher exit waits in the same bound, so a late exit event cannot hold the case past it.
-  const gone = keepChild ? [child.pid] : [child.pid, turn.pid, recordedChildPid];
-  await vi.waitFor(
-    () => {
-      expect(
-        { exited: dispatcherExited, live: gone.filter((pid) => processExists(pid)) },
-        `the turn directory is ${existsSync(turn.dir) ? "present" : "absent"} ${Date.now() - killedAt} ms after the kill; the killed dispatch has not exited or a killed process still reads as live`,
-      ).toEqual({ exited: true, live: [] });
-    },
-    { timeout: 5000, interval: 50 },
-  );
-  return { repo, turnDir: turn.dir, tmpRoot, childPid: turn.pid, killedAt };
+  // wait uses the state lock's rule (`lockHeld`) and the turn removal's rule (`ownerAlive`) with a
+  // fresh read for every poll, and starts no read at or after its bound. The dispatcher exit waits
+  // in the same bound, so a late exit event cannot hold the case past it.
+  const turnLiveness = {
+    turnDir: turn.dir,
+    lockFile,
+    lockPid: lockOwner?.pid,
+    lockStartTime: lockOwner?.startTime,
+    child: { pid: recordedChild.pid, startTime: recordedChild.startTime },
+    fake,
+    identityMs,
+  };
+  const reads = await waitForKilledTurn(turnLiveness, {
+    dispatcherExited: () => dispatcherExited,
+    waitForFake: !keepChild,
+    budgetMs: Math.max(0, deadline - Date.now()),
+  });
+  return {
+    repo,
+    turnDir: turn.dir,
+    tmpRoot,
+    childPid: turn.pid,
+    killedAt,
+    diagnose: () => describeTurn(turnLiveness, reads, dispatcherExited, Date.now() - killedAt),
+    recoveryBudgetMs: () => Math.max(0, deadline - Date.now()),
+  };
 }
 
 // The recovery call inherits the temporary directory that held the turn directory, as a call of the
@@ -294,6 +476,74 @@ const nextCall = (repo, tmpRoot) => {
   for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, tmpRoot);
   return executeRoleCommand(withRepo(dispatchArgv(), repo), { ...basicDeps(), stdin: stdinPrompt });
 };
+
+// Runs the recovery as the real CLI in its own process, so the test can end it at the budget and
+// await its exit before teardown. The child writes state, so no test-side timeout leaves it running.
+// Process: the case already runs one real dispatch; this is the second entry point, and it lets the
+// test meet the budget without a late state write.
+async function recoveryCall(repo, tmpRoot, budgetMs, { spawnChild = spawn } = {}) {
+  const runner = [
+    `import { main } from ${JSON.stringify(pathToFileURL(ROLE).href)};`,
+    "await main(process.argv.slice(1));",
+  ].join("\n");
+  const args = dispatchArgv().map((value) => (value === "<repo>" ? repo : value));
+  let child;
+  try {
+    child = spawnChild(process.execPath, ["--input-type=module", "-e", runner, "--", ...args], {
+      cwd: repo,
+      stdio: ["ignore", "pipe", "ignore"],
+      env: { ...process.env, TMPDIR: tmpRoot, TEMP: tmpRoot, TMP: tmpRoot },
+    });
+  } catch (error) {
+    throw new Error(
+      `the recovery call could not start: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  let stdout = "";
+  child.stdout?.setEncoding?.("utf8");
+  child.stdout?.on?.("data", (chunk) => {
+    stdout += chunk;
+  });
+  // A failed launch emits `error` and may never emit `close`, so both settle the helper.
+  let settle;
+  const done = new Promise((resolve) => {
+    settle = resolve;
+  });
+  child.once("close", (code, signal) => settle({ code, signal }));
+  child.once("error", (error) => settle({ error }));
+  let timer;
+  const expired = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ timedOut: true }), budgetMs);
+  });
+  try {
+    const result = await Promise.race([done, expired]);
+    if (result.timedOut) {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // The launch already failed; no process runs.
+      }
+      await done;
+      return { timedOut: true, code: null, stdout };
+    }
+    if (result.error !== undefined) {
+      throw new Error(
+        `the recovery call could not start: ${result.error instanceof Error ? result.error.message : String(result.error)}`,
+      );
+    }
+    return { timedOut: false, code: result.code, signal: result.signal, stdout };
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // The launch already failed; no process runs.
+      }
+      await done;
+    }
+  }
+}
 
 // Runs another role operation on the run in `repo`, under the temporary root of its killed
 // dispatch, so a re-check of the kept turn directory meets the record origin check.
@@ -367,37 +617,199 @@ async function keptTurnDir() {
 // after its dispatch process died mid-turn removes the directory of that turn.
 // Process: this is the one real crash that proves a killed dispatch leaves its turn directory and
 // state record for the next call. Every other case writes that state in process.
-test("the call that marks a killed dispatch interrupted removes its turn directory", async () => {
-  const { repo, turnDir, tmpRoot, killedAt } = await killedDispatch();
-  // A failure reports the turn directory state and the time from the kill to the check, which the
-  // case log alone does not hold (issue #2038).
-  const check = () =>
-    `the turn directory is ${existsSync(turnDir) ? "present" : "absent"} ${Date.now() - killedAt} ms after the kill`;
-  // Every failure past the kill carries the check, including a failed state-file read.
-  const withCheck = (error) => {
-    const detail = check();
-    const message = error instanceof Error ? error.message : String(error);
-    if (error instanceof Error) {
-      if (!message.includes(detail)) error.message = `${detail}; ${message}`;
-      return error;
+test(
+  "the call that marks a killed dispatch interrupted removes its turn directory",
+  async () => {
+    const caseStartedAt = Date.now();
+    const { repo, turnDir, tmpRoot, diagnose, recoveryBudgetMs } = await killedDispatch({
+      deadline: caseStartedAt + CASE_TIMEOUT_MS - CASE_MARGIN_MS,
+    });
+    // Every failure past the kill reports the pids, the liveness reads, and the time from the kill
+    // to the check (issue #2042).
+    const check = () => diagnose();
+    const withCheck = (error) => {
+      const detail = check();
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof Error) {
+        if (!message.includes(detail)) error.message = `${detail}; ${message}`;
+        return error;
+      }
+      return new Error(`${detail}; ${message}`);
+    };
+    try {
+      expect(existsSync(turnDir), check()).toBe(true);
+
+      // The identity read time is already spent from this budget. The recovery gets what remains,
+      // less a reserve for the state read, and it runs in a process the test ends and awaits.
+      const recoveryBudget = recoveryBudgetMs() - STATE_READ_RESERVE_MS;
+      if (recoveryBudget <= 0) {
+        throw new Error("the recovery budget is exhausted");
+      }
+      const recovered = await recoveryCall(repo, tmpRoot, recoveryBudget);
+      if (recovered.timedOut) {
+        throw new Error(`the recovery call did not finish within ${recoveryBudget} ms`);
+      }
+      const next = {
+        exitCode: recovered.code,
+        payload: JSON.parse(recovered.stdout.trim().split("\n").at(-1)),
+      };
+      const stateRead = readRepoState(repo);
+      stateRead.catch(() => {});
+      const readBudget = Math.min(STATE_READ_BOUND_MS, recoveryBudgetMs());
+      if (readBudget <= 0) {
+        throw new Error("the state-read budget is exhausted");
+      }
+      const state = await within(stateRead, readBudget, "the state read");
+
+      expect(next.exitCode, check()).toBe(1);
+      expect(next.payload.error, check()).toContain("interrupted");
+      expect(state.lifecycle, check()).toBe("interrupted");
+      expect(existsSync(turnDir), check()).toBe(false);
+      expect(readdirSync(tmpRoot), check()).toEqual([]);
+    } catch (error) {
+      throw withCheck(error);
     }
-    return new Error(`${detail}; ${message}`);
+  },
+  CASE_TIMEOUT_MS,
+);
+
+// The wait cases below drive `waitForKilledTurn`, the function the killed-dispatch case runs, with
+// an injected read source and clock. No process is started.
+const waitTurn = {
+  turnDir: join(tmpdir(), "dead-turn-wait-absent"),
+  lockPid: 1234,
+  lockStartTime: "darwin-lstart:1000",
+  child: { pid: 2345, startTime: "darwin-lstart:1000" },
+  fake: { pid: 3456, startTime: "darwin-lstart:1000" },
+  identityMs: 12,
+};
+
+// Usefulness: verifies issue #2042, that the wait asks the state lock's rule and not a recorded pid
+// whether the turn is gone. Every recorded pid is this live process, so a pid-only gate holds the
+// wait to its bound. Not redundant: the case's own wait is the function under test.
+test("the dead-turn wait resolves when the lock rule reads every recorded pid gone", async () => {
+  const liveTurn = {
+    ...waitTurn,
+    lockPid: process.pid,
+    child: { pid: process.pid, startTime: "unused" },
+    fake: { pid: process.pid, startTime: "unused" },
   };
-  try {
-    expect(existsSync(turnDir), check()).toBe(true);
+  const reads = async () => ({
+    lock: { value: false },
+    child: { value: false },
+    fake: { value: false },
+  });
+  let clock = 0;
 
-    const next = await nextCall(repo, tmpRoot);
+  await expect(
+    waitForKilledTurn(liveTurn, {
+      dispatcherExited: () => true,
+      boundMs: 100,
+      pollMs: 10,
+      reads,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+    }),
+  ).resolves.toEqual({
+    lock: { value: false },
+    child: { value: false },
+    fake: { value: false },
+  });
+  expect(processExists(process.pid)).toBe(true);
+});
 
-    expect(next.exitCode, check()).toBe(1);
-    expect(next.payload.error, check()).toContain("interrupted");
-    const state = await readRepoState(repo);
-    expect(state.lifecycle, check()).toBe("interrupted");
-    expect(existsSync(turnDir), check()).toBe(false);
-    expect(readdirSync(tmpRoot), check()).toEqual([]);
-  } catch (error) {
-    throw withCheck(error);
-  }
-}, 60_000);
+// Usefulness: verifies issue #2042 blockers 2 and 3, that the wait reports the pids, the liveness
+// reads, the identity read time, and the elapsed time at its bound, and starts no read after it.
+// The case passes the budget left after the identity read, so the wait uses the smaller of main's
+// 5 s and that budget. Not redundant: no other case drives the shared budget or the failure text.
+test("the dead-turn wait spends the budget left after the identity read", async () => {
+  let clock = 0;
+  let calls = 0;
+  const reads = async () => {
+    calls += 1;
+    return { lock: { value: true }, child: { value: false }, fake: { value: false } };
+  };
+
+  const failure = await waitForKilledTurn(waitTurn, {
+    dispatcherExited: () => true,
+    budgetMs: 60,
+    pollMs: 100,
+    reads,
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
+    },
+  }).catch((error) => error);
+
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure.message).toContain("state lock owner pid 1234");
+  expect(failure.message).toContain("alive");
+  expect(failure.message).toContain("identity read 12 ms");
+  expect(failure.message).toContain("60 ms after the kill");
+  expect(calls).toBe(1);
+});
+
+// Usefulness: verifies issue #2042 blocker 3, that a liveness read which reaches the wait bound is
+// reported with its pid and elapsed time. Not redundant: the held-lock case never takes the read
+// error path.
+test("the dead-turn wait reports a liveness read that reaches its bound", async () => {
+  let clock = 0;
+  let calls = 0;
+  const reads = async (_turn, remaining) => {
+    calls += 1;
+    clock += 100;
+    return {
+      lock: {
+        error: `the state lock read for pid 1234 did not finish within ${Math.round(remaining)} ms`,
+      },
+      child: { value: false },
+      fake: { value: false },
+    };
+  };
+
+  const failure = await waitForKilledTurn(waitTurn, {
+    dispatcherExited: () => true,
+    boundMs: 100,
+    pollMs: 10,
+    reads,
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
+    },
+  }).catch((error) => error);
+
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure.message).toContain(
+    "the state lock read for pid 1234 did not finish within 100 ms",
+  );
+  expect(failure.message).toContain("100 ms after the kill");
+  expect(calls).toBe(1);
+});
+
+// Usefulness: verifies issue #2042, that a recovery process which fails to launch settles at once
+// with the launch error, so the case reports the pids, liveness, identity read, and elapsed time
+// instead of an outer timeout. Not redundant: no other case fails a launch.
+// In-process: the child double emits `error`; no process is started.
+test("a recovery launch failure settles with its error", async () => {
+  const child = new EventEmitter();
+  child.stdout = Object.assign(new EventEmitter(), { setEncoding() {} });
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = vi.fn();
+  const spawnChild = vi.fn(() => {
+    process.nextTick(() => {
+      child.emit("error", Object.assign(new Error("spawn EAGAIN"), { code: "EAGAIN" }));
+    });
+    return child;
+  });
+
+  await expect(recoveryCall("unused", "unused", 1000, { spawnChild })).rejects.toThrow(
+    /the recovery call could not start: spawn EAGAIN/,
+  );
+  expect(child.kill).toHaveBeenCalled();
+});
 
 // Usefulness: verifies issue #1207 acceptance 2, that a recorded directory which is already gone
 // does not fail the call and the run is still marked `interrupted`.
