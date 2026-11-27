@@ -47,6 +47,64 @@ afterAll(async () => {
   for (const repo of repos.splice(0)) await removePath(repo);
 });
 
+/**
+ * The audit state and stderr that a failed exit-code assertion prints. A passing case builds this
+ * message too, so the function must never throw.
+ */
+function failureMessage(summary, stderr) {
+  const reviewers = Array.isArray(summary?.reviewers) ? summary.reviewers : [];
+  return JSON.stringify({
+    status: summary?.status ?? null,
+    pauseReason: summary?.pauseReason ?? null,
+    reason: summary?.reason ?? null,
+    reviewers: reviewers.map((entry) => ({
+      status: entry?.status ?? null,
+      error: entry?.error ?? null,
+    })),
+    stderr: typeof stderr === "string" ? stderr : "",
+  });
+}
+
+/**
+ * Runs one audit with its stderr and console error and warn output captured in the returned
+ * `stderr`, in write order, so a failed exit-code assertion prints the audit error output. Each
+ * line still reaches its original writer.
+ */
+async function runAuditCaptured(options) {
+  const written = [];
+  const record = (text) => written.push(String(text));
+  const stderr = process.stderr;
+  const originalWrite = stderr.write;
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  let forwarding = false;
+  const forward =
+    (original) =>
+    (...args) => {
+      record(`${args.map(String).join(" ")}\n`);
+      forwarding = true;
+      try {
+        return original.apply(console, args);
+      } finally {
+        forwarding = false;
+      }
+    };
+  try {
+    stderr.write = (chunk, ...rest) => {
+      if (!forwarding) record(chunk);
+      return originalWrite.call(stderr, chunk, ...rest);
+    };
+    console.error = forward(originalError);
+    console.warn = forward(originalWarn);
+    const result = await runAudit(options);
+    return { ...result, stderr: written.join("") };
+  } finally {
+    stderr.write = originalWrite;
+    console.error = originalError;
+    console.warn = originalWarn;
+  }
+}
+
 function fenced(value) {
   return `Reasoning before the document.\n\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
 }
@@ -141,7 +199,7 @@ test("an audit reviewer receives the reviewer prompt and codex defaults to no sa
     },
     consolidations: [fenced({ findings: [] })],
   });
-  await runAudit({
+  await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
@@ -174,14 +232,14 @@ test("a reviewer that changes the checkout stops for the owner and leaves the fi
       agy: fenced({ findings: [{ title: "Clean", body: "Body", evidence: "" }] }),
     },
   });
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(1);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(1);
   expect(summary.status).toBe("needs-owner");
   expect(summary.pauseReason).toBe("work-tree-changed");
   expect(summary.reviewers[0].status).toBe("failed");
@@ -287,14 +345,14 @@ test("a resume stops for the owner when the checkout moved", async () => {
   const gh = fakeGh();
   const blocked = fakeTurns();
 
-  const first = await runAudit({
+  const first = await runAuditCaptured({
     prepared: { ...prepared, mode: "resume" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: blocked.runTurn },
   });
 
-  expect(first.exitCode).toBe(1);
+  expect(first.exitCode, failureMessage(first.summary, first.stderr)).toBe(1);
   expect(first.summary.status).toBe("needs-owner");
   expect(first.summary.pauseReason).toBe("work-tree-changed");
   expect(first.summary.issues).toEqual([]);
@@ -314,14 +372,14 @@ test("a resume stops for the owner when the checkout moved", async () => {
       }),
     ],
   });
-  const second = await runAudit({
+  const second = await runAuditCaptured({
     prepared: { ...prepared, mode: "resume" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(second.exitCode).toBe(0);
+  expect(second.exitCode, failureMessage(second.summary, second.stderr)).toBe(0);
   expect(turns.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(2);
   expect(second.summary.issues.map((issue) => issue.title)).toEqual(["Fresh"]);
 });
@@ -341,14 +399,14 @@ test("approve does not feed a saved result from a changed checkout", async () =>
   const gh = fakeGh();
   const blocked = fakeTurns();
 
-  const first = await runAudit({
+  const first = await runAuditCaptured({
     prepared: { ...prepared, mode: "approve" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: blocked.runTurn },
   });
 
-  expect(first.exitCode).toBe(1);
+  expect(first.exitCode, failureMessage(first.summary, first.stderr)).toBe(1);
   expect(first.summary.status).toBe("needs-owner");
   expect(first.summary.approvedPartial).toBe(false);
   expect(first.summary.issues).toEqual([]);
@@ -367,14 +425,14 @@ test("approve does not feed a saved result from a changed checkout", async () =>
       }),
     ],
   });
-  const second = await runAudit({
+  const second = await runAuditCaptured({
     prepared: { ...prepared, mode: "approve" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(second.exitCode).toBe(0);
+  expect(second.exitCode, failureMessage(second.summary, second.stderr)).toBe(0);
   expect(second.summary.approvedPartial).toBe(true);
   expect(second.summary.issues.map((issue) => issue.title)).toEqual(["Fresh approval"]);
   expect(turns.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(1);
@@ -396,14 +454,14 @@ test("a snapshot failure stops the audit before the next reviewer", async () => 
       agy: fenced({ findings: [{ title: "Later", body: "Body", evidence: "" }] }),
     },
   });
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(1);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(1);
   expect(summary.status).toBe("paused");
   expect(summary.pauseReason).toBe("snapshot-failed");
   expect(summary.reviewers[0].status).toBe("failed");
@@ -425,14 +483,14 @@ test("setup that changes the checkout stops for the owner and launches no review
   const runsRoot = join(prepared.workTreeRoot, "runs");
   const gh = fakeGh();
   const turns = fakeTurns();
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(1);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(1);
   expect(summary.status).toBe("needs-owner");
   expect(summary.pauseReason).toBe("work-tree-changed");
   expect(turns.calls).toHaveLength(0);
@@ -453,14 +511,14 @@ test("an approval bound to another failed set is discarded", async () => {
   });
   const gh = fakeGh();
   const turns = fakeTurns({ reviewers: { claude: new Error("still failed") } });
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared: { ...prepared, mode: "resume" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(1);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(1);
   expect(summary.status).toBe("paused");
   expect(summary.pauseReason).toBe("audit-failed");
   expect(summary.approvedPartial).toBe(false);
@@ -481,14 +539,14 @@ test("an approval bound to another revision is discarded", async () => {
   });
   const gh = fakeGh();
   const turns = fakeTurns({ reviewers: { agy: new Error("still failed") } });
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared: { ...prepared, mode: "resume" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(1);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(1);
   expect(summary.status).toBe("paused");
   expect(summary.pauseReason).toBe("audit-failed");
   expect(summary.approvedPartial).toBe(false);
@@ -517,13 +575,13 @@ describe("bounded audit reads", () => {
   test("an audit issue read that never returns ends at the bound", async () => {
     const scoped = isolated("bound");
     await pausedAudit(scoped, { existingIssues: null });
-    const result = await runAudit({
+    const result = await runAuditCaptured({
       prepared: { ...scoped, mode: "resume" },
       runsRoot: runsRootOf(scoped),
       gh: replyOnAbort({ status: null, stdout: "", stderr: "", timedOut: true }),
       deps: { ...depsWith(scoped.workTree), ghTimeoutMs: 20, readCheckout: frozenCheckout },
     });
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode, failureMessage(result.summary, result.stderr)).toBe(1);
     expect(result.summary.pauseReason).toBe("issue-read-failed");
   });
 
@@ -542,14 +600,14 @@ describe("bounded audit reads", () => {
             options.signal.addEventListener("abort", () => resolve(reply), { once: true });
           });
     };
-    const result = await runAudit({
+    const result = await runAuditCaptured({
       prepared: { ...scoped, mode: "resume" },
       runsRoot: runsRootOf(scoped),
       gh,
       signal: abort.signal,
       deps: { ...depsWith(scoped.workTree), readCheckout: frozenCheckout },
     });
-    expect(result.exitCode).toBe(130);
+    expect(result.exitCode, failureMessage(result.summary, result.stderr)).toBe(130);
     expect(result.summary.status).toBe("interrupted");
   });
 });
@@ -585,14 +643,14 @@ test("two reviewers run before one consolidation and create one issue per findin
   const lines = [];
   const spy = vi.spyOn(console, "log").mockImplementation((line) => lines.push(String(line)));
   try {
-    const { exitCode, summary } = await runAudit({
+    const { exitCode, summary, stderr } = await runAuditCaptured({
       prepared,
       runsRoot,
       gh: gh.gh,
       deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
     });
 
-    expect(exitCode).toBe(0);
+    expect(exitCode, failureMessage(summary, stderr)).toBe(0);
     expect(summary.status).toBe("created");
     expect(turns.calls.map((call) => call.roleName)).toEqual(["reviewer", "reviewer", "worker"]);
     expect(turns.calls[2].prompt).toContain("First defect");
@@ -653,7 +711,7 @@ test("a failed issue creation logs one error line", async () => {
   const errors = [];
   const spy = vi.spyOn(console, "error").mockImplementation((line) => errors.push(String(line)));
   try {
-    const { summary } = await runAudit({
+    const { summary } = await runAuditCaptured({
       prepared,
       runsRoot,
       gh: failingGh,
@@ -693,14 +751,14 @@ test("a focused audit gives the focus to every reviewer and keeps it in the reco
     ],
   });
 
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(0);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(0);
   expect(summary.focus).toBe(focus);
   const reviewerCalls = turns.calls.filter((call) => call.roleName === "reviewer");
   expect(reviewerCalls).toHaveLength(2);
@@ -745,14 +803,14 @@ test("an unfocused audit asks for any actionable item and creates a non-defect f
     ],
   });
 
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(0);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(0);
   expect(summary.focus).toBe(null);
   expect(summary.created).toHaveLength(1);
   const reviewerCalls = turns.calls.filter((call) => call.roleName === "reviewer");
@@ -778,7 +836,7 @@ test("a resume reruns the failed reviewer with the stored focus", async () => {
       agy: new Error("reviewer unavailable"),
     },
   });
-  await runAudit({
+  await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
@@ -789,14 +847,14 @@ test("a resume reruns the failed reviewer with the stored focus", async () => {
     reviewers: { agy: fenced({ findings: [] }) },
     consolidations: [fenced({ findings: [] })],
   });
-  const second = await runAudit({
+  const second = await runAuditCaptured({
     prepared: { ...prepared, mode: "resume", focus: null },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: retry.runTurn },
   });
 
-  expect(second.exitCode).toBe(0);
+  expect(second.exitCode, failureMessage(second.summary, second.stderr)).toBe(0);
   const reviewer = retry.calls.find((call) => call.roleName === "reviewer");
   expect(reviewer.kind).toBe("agy");
   expect(reviewer.prompt).toContain(focus);
@@ -815,7 +873,7 @@ test("approve reuses the stored focus for consolidation", async () => {
       agy: new Error("no model"),
     },
   });
-  await runAudit({
+  await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
@@ -825,14 +883,14 @@ test("approve reuses the stored focus for consolidation", async () => {
   const approved = fakeTurns({
     consolidations: [fenced({ findings: [] })],
   });
-  const result = await runAudit({
+  const result = await runAuditCaptured({
     prepared: { ...prepared, mode: "approve", focus: null },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: approved.runTurn },
   });
 
-  expect(result.exitCode).toBe(0);
+  expect(result.exitCode, failureMessage(result.summary, result.stderr)).toBe(0);
   const worker = approved.calls.find((call) => call.roleName === "worker");
   expect(worker.prompt).toContain(focus);
 });
@@ -850,13 +908,13 @@ test("a failed audit creates no issue until a resume succeeds", async () => {
     },
   });
 
-  const first = await runAudit({
+  const first = await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: failed.runTurn },
   });
-  expect(first.exitCode).toBe(1);
+  expect(first.exitCode, failureMessage(first.summary, first.stderr)).toBe(1);
   expect(first.summary.status).toBe("paused");
   expect(first.summary.pauseReason).toBe("audit-failed");
   expect(failed.calls.some((call) => call.roleName === "worker")).toBe(false);
@@ -870,14 +928,14 @@ test("a failed audit creates no issue until a resume succeeds", async () => {
       }),
     ],
   });
-  const second = await runAudit({
+  const second = await runAuditCaptured({
     prepared: { ...prepared, mode: "resume" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: retry.runTurn },
   });
 
-  expect(second.exitCode).toBe(0);
+  expect(second.exitCode, failureMessage(second.summary, second.stderr)).toBe(0);
   expect(second.summary.status).toBe("created");
   expect(retry.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(1);
   expect(retry.calls[0].kind).toBe("agy");
@@ -896,7 +954,7 @@ test("approve consolidates only the successful audits and records the failure", 
       agy: new Error("no model"),
     },
   });
-  await runAudit({
+  await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
@@ -908,14 +966,14 @@ test("approve consolidates only the successful audits and records the failure", 
       fenced({ findings: [{ title: "Kept", body: "Body", evidence: "", existingIssue: null }] }),
     ],
   });
-  const result = await runAudit({
+  const result = await runAuditCaptured({
     prepared: { ...prepared, mode: "approve" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: approved.runTurn },
   });
 
-  expect(result.exitCode).toBe(0);
+  expect(result.exitCode, failureMessage(result.summary, result.stderr)).toBe(0);
   expect(result.summary.approvedPartial).toBe(true);
   expect(result.summary.reviewers[1].status).toBe("failed");
   expect(approved.calls.filter((call) => call.roleName === "reviewer")).toHaveLength(0);
@@ -943,13 +1001,13 @@ test("a repeated approval writes nothing to the audit file", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   try {
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    const first = await runAudit({
+    const first = await runAuditCaptured({
       prepared: { ...prepared, mode: "approve" },
       runsRoot,
       gh: gh.gh,
       deps: { ...depsWith(prepared.workTree), execBounded: failingSetup },
     });
-    expect(first.exitCode).toBe(1);
+    expect(first.exitCode, failureMessage(first.summary, first.stderr)).toBe(1);
     expect(first.summary.pauseReason).toBe("setup-failed");
     expect(first.summary.approvedPartial).toBe(true);
     const before = await readFile(file, "utf8");
@@ -958,14 +1016,14 @@ test("a repeated approval writes nothing to the audit file", async () => {
     const pinned = (await stat(file)).mtimeMs;
 
     vi.setSystemTime(new Date("2026-01-02T00:00:00.000Z"));
-    const second = await runAudit({
+    const second = await runAuditCaptured({
       prepared: { ...prepared, mode: "approve" },
       runsRoot,
       gh: gh.gh,
       deps: { ...depsWith(prepared.workTree), execBounded: failingSetup },
     });
 
-    expect(second.exitCode).toBe(1);
+    expect(second.exitCode, failureMessage(second.summary, second.stderr)).toBe(1);
     expect(second.summary.pauseReason).toBe("setup-failed");
     expect(await readFile(file, "utf8")).toBe(before);
     expect((await stat(file)).mtimeMs).toBe(pinned);
@@ -997,14 +1055,14 @@ test("an existing issue is linked and no duplicate is created", async () => {
       }),
     ],
   });
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(0);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(0);
   expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(1);
   expect(summary.linked.map((issue) => issue.number)).toEqual([7, 8]);
   expect(summary.issues).toHaveLength(3);
@@ -1024,14 +1082,14 @@ test("an unknown existing issue pauses the consolidation", async () => {
       }),
     ],
   });
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(1);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(1);
   expect(summary.status).toBe("paused");
   expect(summary.pauseReason).toBe("consolidation-invalid");
   expect(gh.calls.some((args) => args[1] === "create")).toBe(false);
@@ -1049,7 +1107,7 @@ test("the created issue set does not change on a later resume", async () => {
       fenced({ findings: [{ title: "Frozen", body: "Body", evidence: "", existingIssue: null }] }),
     ],
   });
-  const first = await runAudit({
+  const first = await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
@@ -1059,7 +1117,7 @@ test("the created issue set does not change on a later resume", async () => {
   const creates = gh.calls.filter((args) => args[1] === "create").length;
   const retry = fakeTurns();
 
-  const second = await runAudit({
+  const second = await runAuditCaptured({
     prepared: { ...prepared, mode: "resume" },
     runsRoot,
     gh: gh.gh,
@@ -1067,7 +1125,7 @@ test("the created issue set does not change on a later resume", async () => {
   });
 
   const after = await readAudit(runsRoot, prepared.id);
-  expect(second.exitCode).toBe(0);
+  expect(second.exitCode, failureMessage(second.summary, second.stderr)).toBe(0);
   expect(second.summary.issues).toEqual(first.summary.issues);
   expect(after.issues).toEqual(before.issues);
   expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(creates);
@@ -1089,14 +1147,14 @@ test("an issue read at the page limit pauses before consolidation", async () => 
   const turns = fakeTurns({
     reviewers: { claude: fenced({ findings: [] }), agy: fenced({ findings: [] }) },
   });
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(1);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(1);
   expect(summary.pauseReason).toBe("issue-read-incomplete");
   expect(turns.calls.filter((call) => call.roleName === "worker")).toHaveLength(0);
 });
@@ -1176,14 +1234,14 @@ test("a retry adopts a pending creation from a fresh issue read", async () => {
   await writeAudit(runsRoot, state);
 
   const turns = fakeTurns();
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared: { ...prepared, mode: "resume" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(0);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(0);
   expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(0);
   expect(summary.issues[0].number).toBe(5);
 });
@@ -1216,14 +1274,14 @@ test("a reworded re-audit reconciles a pending creation by its marker", async ()
       }),
     ],
   });
-  const { exitCode, summary } = await runAudit({
+  const { exitCode, summary, stderr } = await runAuditCaptured({
     prepared: { ...prepared, mode: "resume" },
     runsRoot,
     gh: gh.gh,
     deps: { ...depsWith(prepared.workTree), runTurn: turns.runTurn },
   });
 
-  expect(exitCode).toBe(0);
+  expect(exitCode, failureMessage(summary, stderr)).toBe(0);
   expect(gh.calls.filter((args) => args[1] === "create")).toHaveLength(0);
   expect(summary.issues).toHaveLength(1);
   expect(summary.issues[0]).toMatchObject({
@@ -1241,7 +1299,7 @@ test("status writes nothing", async () => {
   const turns = fakeTurns({
     reviewers: { claude: fenced({ findings: [] }), agy: fenced({ findings: [] }) },
   });
-  await runAudit({
+  await runAuditCaptured({
     prepared,
     runsRoot,
     gh: gh.gh,
