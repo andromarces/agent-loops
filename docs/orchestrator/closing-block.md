@@ -31,14 +31,15 @@ The run ends at the first line that is not a `- ` or `N. ` item, a sub-item, or 
 line. A blank line or unindented prose inside a list breaks it.
 
 Under a `Label:` line, after the label value, any number of sections follow, with one blank line
-before each. A section is a bare dash list, or a prose lead with its dash list. A run that starts
-with a plain prose paragraph with no list and holds a plain prose lead with its dash list joins the
-value in order. The paragraph and a later plain prose section with no list join as `; <prose>`, and
-each paragraph's lines join with a space. A plain prose line for this run starts at column 0 with a
-Unicode letter or digit, holds at least one letter, is no list item, and ends with no pipe. That
-excludes `<`, `[`, `|`, `>`, `#`, `=`, `-`, `*`, `_`, a backtick, and a fence. Any other line
-starts no such run. The run needs a plain prose lead with its dash list. A paragraph followed by a
-bare dash list and no prose lead keeps main's result, and so does a bold lead after a paragraph. The lead follows the prose-lead rules, the whole-line bold
+before each. A section is a bare dash list, or a prose lead with its dash list. A run under one
+label folds when a plain prose paragraph with no list is followed by a plain prose lead with its
+dash list: the paragraph joins as `; <prose>`, and its lines join with a space. Shape 2's two-line
+paragraph is that paragraph. A plain prose line for this run starts at column 0 with a Unicode
+letter or digit, holds at least one letter, is no list item, and ends with no pipe. That excludes
+`<`, `[`, `|`, `>`, `#`, `=`, `-`, `*`, `_`, a backtick, and a fence. Any other line starts no
+such run. A paragraph followed by a bare dash list and no prose lead keeps main's result, a bold
+lead after a paragraph keeps main's result, and a two-line paragraph after the lead followed by a
+separate bare dash list also keeps main's result. The lead follows the prose-lead rules, the whole-line bold
 heading included. The list sits directly under the
 lead, or after one blank line when the lead is plain prose. A section needs exactly one blank line
 before it. Two blank lines, or no blank line before it, start no new section, so the existing rules

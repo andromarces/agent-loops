@@ -1897,6 +1897,27 @@ test("parseReportBlock folds plain prose with inline markup and a first-word col
   }
 });
 
+// Usefulness: verifies a later two-line paragraph followed by a separate bare dash list keeps main's null, so no later-paragraph rule is general.
+test("parseReportBlock returns null for a later paragraph followed by a bare dash list", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: ok",
+    "Notes: keep",
+    "",
+    "An opening paragraph.",
+    "",
+    "A lead:",
+    "- a",
+    "",
+    "A trailing line one.",
+    "A trailing line two.",
+    "",
+    "- b",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+});
+
 // Usefulness: verifies a two-line paragraph followed by a bare dash list and no prose lead keeps
 // main's null, because the issue #2069 run needs a plain prose lead with its dash list.
 test("parseReportBlock returns null for a paragraph followed by a bare dash list", () => {

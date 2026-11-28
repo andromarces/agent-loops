@@ -1220,12 +1220,12 @@ function proseSections(out, from) {
 /**
  * Folds each section under a report label line into that label's value. A section is a bare dash
  * run, or a prose lead with its `- ` run, and exactly one blank line comes before each. A prose lead
- * follows the prose-lead rules, the whole-line bold heading included. A run that starts with a
- * plain prose paragraph with no list and holds a plain prose lead with its dash list folds in order:
- * the paragraph and any later plain prose section with no list join as `; <prose>`, and each
- * paragraph's lines join with a space. A paragraph followed by a bare dash list and no prose lead
- * starts no such run. Markers drop, and sections join each other and an existing value with a
- * semicolon and a space.
+ * follows the prose-lead rules, the whole-line bold heading included. A run under one label folds
+ * when a plain prose paragraph with no list is followed by a plain prose lead with its dash list:
+ * the paragraph joins as `; <prose>`, and its lines join with a space. A paragraph followed by a bare
+ * dash list and no prose lead starts no such run, and so does a two-line paragraph after the lead
+ * followed by a separate bare dash list. Markers drop, and sections join each other and an existing
+ * value with a semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.
