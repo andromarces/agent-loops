@@ -90,6 +90,28 @@ const ABSENT_BLOCKERS_REPAIRED = [
   "Deferred: none.",
 ].join("\n");
 
+// The issue #2069 shape 3: Conclusion and Why come after the other four labels, in bold.
+const SHAPE_3 = [
+  "The run is verified.",
+  "",
+  "Blockers: none.",
+  "Checks: npm test",
+  "Notes: -",
+  "Deferred: none",
+  "",
+  "**Conclusion:** the tests pass.",
+  "",
+  "**Why:** npm test exited 0.",
+].join("\n");
+const SHAPE_3_REPAIRED = [
+  "Conclusion: the tests pass.",
+  "Why: npm test exited 0.",
+  "Blockers: none.",
+  "Checks: npm test",
+  "Notes: -",
+  "Deferred: none",
+].join("\n");
+
 // A reviewer repair that moves the words `to run` from Deferred to Checks, so the failed check
 // reads `failed to run`. The original Why is an explicit empty line with indented prose under it.
 const REVIEWER_MOVED = [
@@ -604,6 +626,26 @@ test("an issue #2015 shape names the mismatched repair outcome", async () => {
   expect(result.response).toBe(ABSENT_BLOCKERS);
   expect(result.report).toBeNull();
   expect(result.reportMissingLabels).toEqual(["Blockers"]);
+  expect(result.reportRepairOutcome).toBe("mismatched");
+});
+
+// Usefulness: verifies the issue #2069 shape 3 repair names why it does not match, which is the
+// issue's second branch. The original parse reads from the last Conclusion line and holds only
+// Conclusion and Why, so the in-order repair gains the four labels above it and the turn names
+// mismatched with the original response kept.
+test("the issue #2069 shape 3 repair names mismatched", async () => {
+  const agent = scripted([SHAPE_3, SHAPE_3_REPAIRED]);
+  const result = await runChild({
+    agents: { fake: agent },
+    role: { kind: "fake", sessionId: null },
+    roleName: "worker",
+    prompt: "go",
+    cwd: repo,
+  });
+
+  expect(agent.recorded).toHaveLength(2);
+  expect(result.response).toBe(SHAPE_3);
+  expect(result.report).toBeNull();
   expect(result.reportRepairOutcome).toBe("mismatched");
 });
 

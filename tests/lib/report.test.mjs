@@ -1758,9 +1758,9 @@ test("parseReportBlock returns null for a prose section outside the one-blank-li
   }
 });
 
-// Usefulness: verifies the issue #2069 shape 3 parses directly, so the parser holds the values a
-// reordered block writes above its final Conclusion and Why lines. Main returns null for this shape.
-test("parseReportBlock parses the issue #2069 reordered block", () => {
+// Usefulness: verifies the issue #2069 shape 3 keeps main's null, because the parser reads from the
+// last Conclusion line and the labels above it never join the block.
+test("parseReportBlock returns null for the issue #2069 reordered block", () => {
   const response = [
     "The run is verified.",
     "",
@@ -1773,14 +1773,33 @@ test("parseReportBlock parses the issue #2069 reordered block", () => {
     "",
     "**Why:** npm test exited 0.",
   ].join("\n");
-  expect(parseReportBlock(response)).toEqual({
-    conclusion: "the tests pass.",
-    why: "npm test exited 0.",
-    blockers: "none.",
-    checks: "npm test",
-    notes: "-",
-    deferred: "none",
-  });
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies two leading plain labels above a final Conclusion keep main's null, so a
+// stale draft cannot supply the final block.
+test("parseReportBlock returns null for two leading labels above the final Conclusion", () => {
+  expect(
+    parseReportBlock("Blockers: none\nChecks: npm test\n\nConclusion: done\nWhy: ok"),
+  ).toBeNull();
+});
+
+// Usefulness: verifies a stale Blockers and Checks from an earlier draft above an explicit
+// Conclusion keep main's null, so they never reach the final block.
+test("parseReportBlock returns null for a stale draft above an explicit Conclusion", () => {
+  expect(
+    parseReportBlock("Blockers: stale\nChecks: stale checks\n\nConclusion: done\nWhy: ok"),
+  ).toBeNull();
+});
+
+// Usefulness: verifies a stale Blockers and Checks from an earlier draft above an inferred prose
+// conclusion keep main's null, so they never supply a final block.
+test("parseReportBlock returns null for a stale draft above an inferred conclusion", () => {
+  expect(
+    parseReportBlock(
+      "Blockers: stale\nChecks: stale checks\n\nThe final result.\n\nWhy: ok\nBlockers: none",
+    ),
+  ).toBeNull();
 });
 
 // Usefulness: verifies the issue #2069 fold stays on the shapes it names, so trailing prose after
@@ -1852,9 +1871,11 @@ const REORDERED_BLOCK = [
   "**Why:** npm test exited 0.",
 ].join("\n");
 
-// Usefulness: verifies a repair that restates the issue #2069 reordered values matches, a wordless
-// Notes dash included (issue #2069 review).
-test("a repair accepts the issue #2069 reordered values", () => {
+// Usefulness: verifies the issue #2069 shape 3 repair cannot match, which is the issue's second
+// branch. The original parse reads from the last Conclusion line, so it holds only Conclusion and
+// Why, and a repair that adds Blockers, Checks, Notes, and Deferred gains labels that the matcher
+// refuses by design.
+test("a repair of the issue #2069 shape 3 does not match", () => {
   const repairedResponse = [
     "Conclusion: the tests pass.",
     "Why: npm test exited 0.",
@@ -1865,63 +1886,77 @@ test("a repair accepts the issue #2069 reordered values", () => {
   ].join("\n");
   const report = parseReportBlock(repairedResponse);
   expect(report).not.toBeNull();
-  expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(true);
-});
-
-// Usefulness: verifies a repair that drops a label the parser held, a wordless Notes dash included,
-// is refused (issue #2069 review).
-test("a repair refuses a removed label in the issue #2069 reordered block", () => {
-  const repairedResponse = [
-    "Conclusion: the tests pass.",
-    "Why: npm test exited 0.",
-    "Blockers: none.",
-    "Checks: npm test",
-    "Deferred: none",
-  ].join("\n");
-  const report = parseReportBlock(repairedResponse);
-  expect(report).not.toBeNull();
   expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(false);
 });
 
-// Usefulness: verifies a repair that adds a label the parser did not hold is refused, even when the
-// rest is a reordered restatement (issue #2069 review).
-test("a repair refuses an added label in the issue #2069 reordered block", () => {
+// Usefulness: verifies a repair may drop a wordless Notes dash as main allows, so the repair match
+// keeps main's inherited comparison for a value that holds no word.
+test("a repair drops a wordless Notes dash as main does", () => {
   const original = [
-    "Blockers: none.",
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
     "Checks: npm test",
-    "Deferred: none",
-    "",
-    "**Conclusion:** the tests pass.",
-    "",
-    "**Why:** npm test exited 0.",
-  ].join("\n");
-  const repairedResponse = [
-    "Conclusion: the tests pass.",
-    "Why: npm test exited 0.",
-    "Blockers: none.",
-    "Checks: npm test",
-    "Notes: added",
-    "Deferred: none",
-  ].join("\n");
-  const report = parseReportBlock(repairedResponse);
-  expect(report).not.toBeNull();
-  expect(repairedReportMatches(original, repairedResponse, report)).toBe(false);
-});
-
-// Usefulness: verifies a repair that changes one value while reordering is refused (issue #2069
-// review). The reorder alone never excuses a changed word.
-test("a repair refuses a changed value in the issue #2069 reordered block", () => {
-  const repairedResponse = [
-    "Conclusion: the tests pass.",
-    "Why: npm test exited 0.",
-    "Blockers: none.",
-    "Checks: npm test failed",
     "Notes: -",
     "Deferred: none",
   ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test",
+    "Deferred: none",
+  ].join("\n");
   const report = parseReportBlock(repairedResponse);
   expect(report).not.toBeNull();
-  expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(false);
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(true);
+});
+
+// Usefulness: verifies a repair may change a wordless Notes dash to none as main allows, so the
+// inherited comparison still accepts the sole word none.
+test("a repair changes a wordless Notes dash to none as main does", () => {
+  const original = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes: -",
+    "Deferred: none",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(true);
+});
+
+// Usefulness: verifies a star-list repair that drops a dash placeholder matches as main allows, so
+// the repair match keeps main's content comparison when the parser drops the star list.
+test("a star-list repair that drops a dash placeholder matches as main does", () => {
+  const original = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks:",
+    "* npm test failed",
+    "Notes: -",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test failed",
+    "Notes:",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(true);
 });
 
 // Usefulness: verifies a response with no Conclusion line still parses when plain prose supplies

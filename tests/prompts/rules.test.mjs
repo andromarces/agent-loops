@@ -238,11 +238,9 @@ test("the closing-block rule states the one-blank-line list fold", () => {
   expect(reportBlock).toMatch(
     /Under a `Label:` line, after the label value, any number of sections follow, with one blank line before each/,
   );
+  expect(reportBlock).toMatch(/A section is a bare dash list, or a prose lead with its dash list/);
   expect(reportBlock).toMatch(
-    /A section is a bare dash list, a prose line, or a prose lead with its dash list/,
-  );
-  expect(reportBlock).toMatch(
-    /A run of prose sections that holds a prose lead with its dash list joins the value in order\. A prose section with no list inside that run joins as/,
+    /A run that starts with a plain prose paragraph with no list and holds a prose lead with its dash list joins the value in order\./,
   );
   expect(reportBlock).toMatch(
     /The lead follows the prose-lead rules, the whole-line bold heading included/,

@@ -6,7 +6,7 @@ A block that lacks a required label is null, and `reportMissingLabels` names eac
 
 A child turn whose successful string response parses to a null report takes one repair turn in the same session. The repair asks for the closing block alone in a short canonical format and keeps the original findings, checks, and verdict. It runs inside the charged step, under the reviewer mutation check, and changes no work product. A reviewer repair runs under its own mutation check, so a write is still a mutation. A cancel that lands with a handled repair failure still ends the turn as a cancel. A repair that replaces the conversation keeps the replacement mark, so the next turn delivers the role preamble or task. The repair prompt, and the worker preamble, state that `Conclusion:` and `Why:` come first, in that order.
 
-The repaired block is untrusted: a label that held a value must keep its normalized content, whatever list form it used. An absent label gains only a `none` finding, and a reviewer verdict must match an explicit original verdict. An explicitly empty label is not an absent label, so a repair may fill only a label that no line names and must leave an empty one empty. A label the parser read a value for must stay present, a wordless dash included. A repair never alters, adds, drops, or moves a word between labels. The empty-label rule applies only when the parser returns per-label values for the original block; when the fold fails and the parser reads the raw block, the inherited comparison alone applies (issue #2015, [ADR 0169](https://github.com/andromarces/agent-loops/blob/main/adr/0169-name-the-outcome-of-a-repair-that-does-not-recover-a-block.md)). An accept needs a non-empty original value for every required label and for `Checks`, so an empty original label cannot become acceptance evidence. A lost or replaced session, a failed repair, a null repair, and a mismatched repair leave the original response in `raw`, and `reportRepairOutcome` names `not-run`, `failed`, `null`, or `mismatched` with no response text. A cancel during the repair ends the turn as a cancel on the original error path, with no result and no `raw`.
+The repaired block is untrusted: a label that held a value must keep its normalized content, whatever list form it used. An absent label gains only a `none` finding, and a reviewer verdict must match an explicit original verdict. An explicitly empty label is not an absent label, so a repair may fill only a label that no line names and must leave an empty one empty. A repair never alters, adds, drops, or moves a word between labels; a value that holds no word, such as a dash, keeps the inherited comparison. The empty-label rule applies only when the parser returns per-label values for the original block; when the fold fails and the parser reads the raw block, the inherited comparison alone applies (issue #2015, [ADR 0169](https://github.com/andromarces/agent-loops/blob/main/adr/0169-name-the-outcome-of-a-repair-that-does-not-recover-a-block.md)). An accept needs a non-empty original value for every required label and for `Checks`, so an empty original label cannot become acceptance evidence. A lost or replaced session, a failed repair, a null repair, and a mismatched repair leave the original response in `raw`, and `reportRepairOutcome` names `not-run`, `failed`, `null`, or `mismatched` with no response text. A cancel during the repair ends the turn as a cancel on the original error path, with no result and no `raw`.
 
 A report that parses but lacks the reviewer `Checks` line or the `Verdict` line takes no repair. `acceptanceFailure` rejects that report: a missing `Verdict` yields `verdict`, and an accept without a `Checks` line yields `checks`. The repair handles only a null report.
 
@@ -31,11 +31,11 @@ The run ends at the first line that is not a `- ` or `N. ` item, a sub-item, or 
 line. A blank line or unindented prose inside a list breaks it.
 
 Under a `Label:` line, after the label value, any number of sections follow, with one blank line
-before each. A section is a bare dash list, a prose line, or a prose lead with its dash list. A run
-of prose sections that holds a prose lead with its dash list joins the value in order. A prose
-section with no list inside that run joins as `; <prose>`, and its paragraph lines join with a
-space. The lead
-follows the prose-lead rules, the whole-line bold heading included. The list sits directly under the
+before each. A section is a bare dash list, or a prose lead with its dash list. A run that starts
+with a plain prose paragraph with no list and holds a prose lead with its dash list joins the value
+in order. The paragraph and a later plain prose section with no list join as `; <prose>`, and each
+paragraph's lines join with a space. The lead follows the prose-lead rules, the whole-line bold
+heading included. The list sits directly under the
 lead, or after one blank line when the lead is plain prose. A section needs exactly one blank line
 before it. Two blank lines, or no blank line before it, start no new section, so the existing rules
 decide that shape.
@@ -93,13 +93,6 @@ lines between, also joins the block. So `**Blockers:** none` in its own paragrap
 earlier prose, in a blockquote, or in a fenced code block stays out and neither starts nor extends
 the block. A label repeated inside the block keeps its last occurrence. A `Verdict:` line inside the
 block still governs over one above it.
-
-When the block from the last `Conclusion:` line holds no `Blockers` line and no earlier
-`Conclusion` line stands above it, a run of report label lines directly above it, with only blank
-lines between and a `Blockers:` line in the run, joins the block. So `Blockers`, `Checks`,
-`Notes`, and `Deferred` before a final `**Conclusion:**` and `**Why:**` parse as one block with
-those values. A block that holds `Blockers` keeps its start, and a response with an earlier
-`Conclusion` line keeps its later start, so a repair cannot gain a value from an earlier block.
 
 A `Verdict:` line inside a fenced code block supplies no verdict. A response whose only `Verdict:`
 line sits in a fence has none.
