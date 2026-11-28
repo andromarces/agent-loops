@@ -735,13 +735,42 @@ function withoutListMarker(line) {
 }
 
 /**
+ * The report label lines directly above the closing block, in response order, with only blank lines
+ * between them and the block. A label that the response wrote above the block still holds its
+ * inline value, so a repair may restate it in the canonical order without changing a word (issue
+ * #2069). A non-label line ends the run, so narration and a list above the block supply no value.
+ * @param {string} response
+ * @param {string[]} block
+ * @returns {string[]}
+ */
+function labelLinesAboveBlock(response, block) {
+  const { lines } = normalizedReportLines(response);
+  const out = [];
+  let at = lines.length - block.length - 1;
+  while (at >= 0) {
+    if (lines[at].trim() === "") {
+      at--;
+      continue;
+    }
+    if (!isKnownLabelLine(lines[at])) {
+      break;
+    }
+    out.push(lines[at]);
+    at--;
+  }
+  return out.reverse();
+}
+
+/**
  * The normalized content of each report label in `response`, from the last occurrence of the label
  * to the next known label. Every line under the label contributes, so a `*` list or a wrapped line
- * that the parser does not fold still counts as content. `named` holds every label that a line names,
- * so a label line with no content stays apart from a label that the response omits. `holds` holds
- * every label with a parsed value or a word in the content scan, so a dash value counts as held and
- * a list the parser drops still counts by its words. `perLabel` is true only when the parser
- * returns per-label values; a failed fold reads the raw block and keeps the inherited comparison.
+ * that the parser does not fold still counts as content. A label line directly above the closing
+ * block, with only blank lines between, also contributes its inline value. `named` holds every label
+ * that a line names, so a label line with no content stays apart from a label that the response
+ * omits. `holds` holds every label with a parsed value or a word in the content scan, so a dash
+ * value counts as held and a list the parser drops still counts by its words. `perLabel` is true
+ * only when the parser returns per-label values; a failed fold reads the raw block and keeps the
+ * inherited comparison.
  * @param {string} response
  * @returns {{ sections: Map<string, string[]>, named: Set<string>, holds: Set<string>, perLabel: boolean } | null}
  */
@@ -753,25 +782,32 @@ function originalLabelTokens(response) {
   const { block, labels, lines } = shared;
   const sections = new Map();
   const named = new Set();
-  let current = null;
-  for (const line of block) {
-    const match = line.match(REPORT_LABEL_LINE);
-    if (match) {
-      current = LABEL_KEY_BY_NAME.get(match[1].toLowerCase()) ?? null;
-      if (current !== null) {
-        sections.set(current, reportContentTokens(match[2]));
-        named.add(current);
+  const scan = (blockLines) => {
+    let current = null;
+    for (const line of blockLines) {
+      const match = line.match(REPORT_LABEL_LINE);
+      if (match) {
+        current = LABEL_KEY_BY_NAME.get(match[1].toLowerCase()) ?? null;
+        if (current !== null) {
+          sections.set(current, reportContentTokens(match[2]));
+          named.add(current);
+        }
+        continue;
       }
-      continue;
+      if (isKnownLabelLine(line)) {
+        current = null;
+        continue;
+      }
+      if (current !== null) {
+        sections.get(current).push(...reportContentTokens(withoutListMarker(line)));
+      }
     }
-    if (isKnownLabelLine(line)) {
-      current = null;
-      continue;
-    }
-    if (current !== null) {
-      sections.get(current).push(...reportContentTokens(withoutListMarker(line)));
-    }
+  };
+  // The block holds the last occurrence of each label, so it overwrites any value above it.
+  if (lines !== null) {
+    scan(labelLinesAboveBlock(response, block));
   }
+  scan(block);
   // The parsed label value decides a wordless value: a dash, inline or folded from a list, is a
   // value the original holds. The content scan still marks a label whose words the parser drops,
   // such as a star-list finding, so the inherited comparison stays unchanged for that shape.
@@ -1112,10 +1148,71 @@ function trimTrailingBlanks(out) {
 }
 
 /**
+ * The index of the label line that owns the prose run ending at `out[from]`, or -1 when the entries
+ * above it are no run of prose sections. A section is one line or a paragraph of consecutive prose
+ * lines, separated from its neighbour by exactly one blank line. A list, a table row, a label line
+ * with no blank above it, and two blank lines all supply no owner.
+ * @param {string[]} out
+ * @param {number} from
+ * @returns {number}
+ */
+function proseSectionOwner(out, from) {
+  let at = from;
+  while (at >= 0) {
+    if (!isPlainProseLine(out[at]) && !isBoldProseLine(out[at])) {
+      return -1;
+    }
+    // Move up to the first line of this paragraph.
+    while (at > 0 && out[at - 1].trim() !== "" && !PLAIN_LABEL_LINE.test(out[at - 1])) {
+      if (!isPlainProseLine(out[at - 1]) && !isBoldProseLine(out[at - 1])) {
+        return -1;
+      }
+      at--;
+    }
+    if (at < 2 || out[at - 1].trim() !== "" || out[at - 2].trim() === "") {
+      return -1;
+    }
+    if (PLAIN_LABEL_LINE.test(out[at - 2])) {
+      return at - 2;
+    }
+    at -= 2;
+  }
+  return -1;
+}
+
+/**
+ * The prose sections in `out` from `from`, in order. A section is a group of consecutive non-blank
+ * entries, and its lines join with a space.
+ * @param {string[]} out
+ * @param {number} from
+ * @returns {string[]}
+ */
+function proseSections(out, from) {
+  const sections = [];
+  let section = [];
+  for (let i = from; i < out.length; i++) {
+    if (out[i].trim() === "") {
+      if (section.length > 0) {
+        sections.push(section.join(" "));
+        section = [];
+      }
+      continue;
+    }
+    section.push(out[i].trim());
+  }
+  if (section.length > 0) {
+    sections.push(section.join(" "));
+  }
+  return sections;
+}
+
+/**
  * Folds each section under a report label line into that label's value. A section is a bare dash
- * run, or a prose lead with its `- ` run, and exactly one blank line comes before each.
+ * run, a prose line, or a prose lead with its `- ` run, and exactly one blank line comes before each.
  * A prose lead follows the prose-lead rules, the whole-line bold heading included.
- * Markers drop, and sections join each other and an existing value with a semicolon and a space.
+ * A run of sections folds in order, and a prose section with no list joins as `; <prose>`, its
+ * paragraph lines joined with a space. Markers drop, and sections join each other and an existing
+ * value with a semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.
@@ -1212,25 +1309,55 @@ function foldEmptyLabelLists(lines) {
         ({ items, masked: itemMasked, end } = takeItems(lines, i + 1, HEADING_ITEM));
         foldedAfterBlank = items.length > 0;
       }
-      if (items.length > 0 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
+      // A prose section above this line, with no list, folds together with it into the label that
+      // owns the run (issue #2069). A label line directly above the run keeps the earlier path.
+      const owner = at >= 0 && PLAIN_LABEL_LINE.test(out[at]) ? at : proseSectionOwner(out, at);
+      if (items.length > 0 && owner >= 0 && (owner === at || oneBlankBefore)) {
+        const lead = `${proseText(line).replace(/:$/, "")}: `;
         // Adds the label to `invalid` when it is `sectioned` and `oneBlankBefore` is false.
-        if (sectioned.has(at) && !oneBlankBefore) {
-          invalid.add(at);
+        if (sectioned.has(owner) && !oneBlankBefore) {
+          invalid.add(owner);
         }
         if (!oneBlankBefore) {
-          nonCanonical.add(at);
+          nonCanonical.add(owner);
         }
-        folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
-        addMasked(out[at], `${proseText(line).replace(/:$/, "")}: ${itemMasked}`);
-        out[at] = appendToLabel(
-          out[at],
-          `${proseText(line).replace(/:$/, "")}: ${items.join("; ")}`,
-        );
+        folded.push({ label: out[owner].slice(0, out[owner].indexOf(":")), index: owner });
+        if (owner === at) {
+          addMasked(out[owner], `${lead}${itemMasked}`);
+          out[owner] = appendToLabel(out[owner], `${lead}${items.join("; ")}`);
+        } else {
+          // The prose paragraphs above join in order, each with no list as `; <prose>`, and this
+          // leading section last. The fold consumes the raw prose lines, so no text is dropped.
+          const prose = proseSections(out, owner + 1);
+          addMasked(out[owner], [...prose, `${lead}${itemMasked}`].join("; "));
+          out[owner] = appendToLabel(
+            out[owner],
+            [...prose, `${lead}${items.join("; ")}`].join("; "),
+          );
+          sectioned.add(owner);
+          out.length = owner + 1;
+        }
         if (foldedAfterBlank) {
-          sectioned.add(at);
+          sectioned.add(owner);
           trimTrailingBlanks(out);
         }
         i = end;
+        continue;
+      }
+      if (
+        items.length === 0 &&
+        at >= 0 &&
+        owner === at &&
+        sectioned.has(at) &&
+        oneBlankBefore &&
+        !nonCanonical.has(at)
+      ) {
+        // A prose section with no list after a section fold joins the value in order (issue #2069).
+        const prose = proseText(line);
+        folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
+        addMasked(out[at], prose);
+        out[at] = appendToLabel(out[at], prose);
+        trimTrailingBlanks(out);
         continue;
       }
     } else if (

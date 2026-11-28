@@ -1,7 +1,13 @@
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
 import { parseReportBlock } from "../../src/lib/report.mjs";
-import { initTaskBlock, redRunRule, reportBlock, testSlotRule } from "../../src/prompts/rules.mjs";
+import {
+  closingBlockRepairPrompt,
+  initTaskBlock,
+  redRunRule,
+  reportBlock,
+  testSlotRule,
+} from "../../src/prompts/rules.mjs";
 
 // The full-suite rule of every worker and reviewer turn (issue #848, ADR 0040).
 
@@ -232,7 +238,12 @@ test("the closing-block rule states the one-blank-line list fold", () => {
   expect(reportBlock).toMatch(
     /Under a `Label:` line, after the label value, any number of sections follow, with one blank line before each/,
   );
-  expect(reportBlock).toMatch(/A section is a bare dash list, or a prose lead with its dash list/);
+  expect(reportBlock).toMatch(
+    /A section is a bare dash list, a prose line, or a prose lead with its dash list/,
+  );
+  expect(reportBlock).toMatch(
+    /A run of prose sections that holds a prose lead with its dash list joins the value in order\. A prose section with no list joins as/,
+  );
   expect(reportBlock).toMatch(
     /The lead follows the prose-lead rules, the whole-line bold heading included/,
   );
@@ -353,6 +364,16 @@ test("the closing-block rule puts quoted or multi-paragraph text before the bloc
     "Deferred: none",
   ].join("\n");
   expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies requirement "the repair prompt states that Conclusion and Why come first"
+// (issue #2069). The repair of that shape keeps the same values in canonical order, so the prompt
+// names the order for a worker and a reviewer.
+test("the repair prompt states that Conclusion and Why come first", () => {
+  for (const reviewer of [false, true]) {
+    const prompt = closingBlockRepairPrompt({ reviewer }).replace(/\s+/g, " ");
+    expect(prompt).toContain("Put `Conclusion:` and `Why:` first, in that order.");
+  }
 });
 
 // Usefulness: verifies the issue #1380 rule forbids only the two observed shapes. A general

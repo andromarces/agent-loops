@@ -100,8 +100,10 @@ const reasonsUnderWhyRule =
 
 // With no `Conclusion:` line, the runtime takes the nearest plain prose line above the first report
 // label as `Conclusion`; a bold-lead narration paragraph alone supplies none, and the report is null.
+// A block that starts at the last `Conclusion:` line drops the labels above it, so the order rule
+// names `Why:` too (issue #2069).
 const conclusionFirstRule =
-  "The block must open with the `Conclusion:` line. A response with no `Conclusion:` line has no block. The parent then reads the response as raw text. State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.";
+  "The block must open with the `Conclusion:` line, then the `Why:` line, before `Blockers:`, `Checks:`, `Notes:`, and `Deferred:`. A response with no `Conclusion:` line has no block. The parent then reads the response as raw text. State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.";
 
 // A later turn resumes the same session and gets no preamble, so it never learns which temporary
 // directory is current. Creation can fail and leave the inherited directory, so the directory can
@@ -180,6 +182,7 @@ Your role:
 - ${secretFileRule}
 - If a late event arrives after the closing block, end again with the closing block for the whole turn. The parent reads only your last message.
 - ${reasonsUnderWhyRule}
+- ${conclusionFirstRule}
 - You do NOT decide when the loop ends.
 
 ${reportBlock}

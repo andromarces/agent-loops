@@ -6,6 +6,8 @@ partially-superseded
 
 Partially superseded by [ADR 0168: Fold a closing-block list item that opens with a plain label name](0168-fold-a-plain-label-list-item.md). The replaced part is the decorated-label rejection of decision 4, for a `- ` item or sub-item that opens with a plain report label name and a colon inside a list run that folds under a label. Every other decorated label stays unparseable. Decisions 1, 2, 3, and 5 stay in force, and so does every other rejection of decision 4.
 
+Partially superseded by [ADR 0182: Fold a prose section with no list under one closing-block label](0182-fold-a-prose-section-with-no-list-under-one-closing-block-label.md). The replaced part is the section definition of decision 1: "A section is a bare dash run, or a prose lead with its dash run." A section is now a bare dash run, a prose line, or a prose lead with its dash run. Every other sentence of decision 1 stays in force, and so does every sentence of decisions 2, 3, 4, and 5. Every sentence of the Consequences section stays true, because each one names a lead with its list or a refusal, not a bare prose line.
+
 ## Supersedes
 
 This ADR partially supersedes [ADR 0140: Fold every closing-block list level](0140-fold-every-closing-block-list-level.md). The replaced part is the "prose between two lists" item of decision 3. The other decisions stay in force, and so does every other rejection of decision 3.

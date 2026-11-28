@@ -4,7 +4,7 @@ Part of the [orchestrator instructions](../orchestrator-instructions.md). Read t
 
 A block that lacks a required label is null, and `reportMissingLabels` names each missing label.
 
-A child turn whose successful string response parses to a null report takes one repair turn in the same session. The repair asks for the closing block alone in a short canonical format and keeps the original findings, checks, and verdict. It runs inside the charged step, under the reviewer mutation check, and changes no work product. A reviewer repair runs under its own mutation check, so a write is still a mutation. A cancel that lands with a handled repair failure still ends the turn as a cancel. A repair that replaces the conversation keeps the replacement mark, so the next turn delivers the role preamble or task.
+A child turn whose successful string response parses to a null report takes one repair turn in the same session. The repair asks for the closing block alone in a short canonical format and keeps the original findings, checks, and verdict. It runs inside the charged step, under the reviewer mutation check, and changes no work product. A reviewer repair runs under its own mutation check, so a write is still a mutation. A cancel that lands with a handled repair failure still ends the turn as a cancel. A repair that replaces the conversation keeps the replacement mark, so the next turn delivers the role preamble or task. The repair prompt, and the worker preamble, state that `Conclusion:` and `Why:` come first, in that order.
 
 The repaired block is untrusted: a label that held a value must keep its normalized content, whatever list form it used. An absent label gains only a `none` finding, and a reviewer verdict must match an explicit original verdict. An explicitly empty label is not an absent label, so a repair may fill only a label that no line names and must leave an empty one empty. A repair never alters, adds, drops, or moves a word between labels; a value that holds no word, such as a dash, keeps the inherited comparison. The empty-label rule applies only when the parser returns per-label values for the original block; when the fold fails and the parser reads the raw block, the inherited comparison alone applies (issue #2015, [ADR 0169](https://github.com/andromarces/agent-loops/blob/main/adr/0169-name-the-outcome-of-a-repair-that-does-not-recover-a-block.md)). An accept needs a non-empty original value for every required label and for `Checks`, so an empty original label cannot become acceptance evidence. A lost or replaced session, a failed repair, a null repair, and a mismatched repair leave the original response in `raw`, and `reportRepairOutcome` names `not-run`, `failed`, `null`, or `mismatched` with no response text. A cancel during the repair ends the turn as a cancel on the original error path, with no result and no `raw`.
 
@@ -31,18 +31,20 @@ The run ends at the first line that is not a `- ` or `N. ` item, a sub-item, or 
 line. A blank line or unindented prose inside a list breaks it.
 
 Under a `Label:` line, after the label value, any number of sections follow, with one blank line
-before each. A section is a bare dash list, or a prose lead with its dash list. The lead follows
-the prose-lead rules, the whole-line bold heading included. The list sits directly under the lead,
-or after one blank line when the lead is plain prose. A section needs exactly one blank line before
-it. Two blank lines, or no blank line before it, start no new section, so the existing rules decide
-that shape.
+before each. A section is a bare dash list, a prose line, or a prose lead with its dash list. A run
+of prose sections that holds a prose lead with its dash list joins the value in order. A prose
+section with no list joins as `; <prose>`, and a paragraph's lines join with a space. The lead
+follows the prose-lead rules, the whole-line bold heading included. The list sits directly under the
+lead, or after one blank line when the lead is plain prose. A section needs exactly one blank line
+before it. Two blank lines, or no blank line before it, start no new section, so the existing rules
+decide that shape.
 
 The label's own list sits directly under the label or after one blank line. It takes dash or
 ordered items. The items join the label value with `; `, so `Why: x`, a blank line, and `- a` read
 `x; a`. An empty `Notes:` reads `a`. A bare dash section joins the same value after one blank line,
 so `- a`, a blank line, and `- b` read `a; b`.
 
-A prose section joins the label value after one blank line. The prose line comes next, and its `- `
+A prose lead joins the label value after one blank line. The prose line comes next, and its `- `
 list sits directly under it or after one blank line. The list takes dash items only. An ordered
 list there stays unparseable.
 

@@ -1624,6 +1624,140 @@ test("parseReportBlock folds a second dash list and its prose line under one lab
   });
 });
 
+// Usefulness: verifies the issue #2069 shape 1 parses, so a prose paragraph with no list followed
+// by a prose lead and its dash list keeps the whole report instead of returning null. No other test
+// covers two prose sections under one label.
+test("parseReportBlock folds a prose paragraph with no list and a later prose lead", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: tests pass",
+    "- **Tests:** pass",
+    "- **Lint:** clean",
+    "",
+    "The parser now folds this paragraph.",
+    "",
+    "The next section follows:",
+    "",
+    "- first",
+    "- second",
+    "",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "tests pass; **Tests:** pass; **Lint:** clean; The parser now folds this paragraph.; The next section follows: first; second",
+    blockers: "none",
+    checks: "npm test",
+    notes: "none",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies the issue #2069 shape 2 parses, so a two-line prose paragraph, a prose lead
+// with its dash list, and a trailing prose line keep the report instead of returning null.
+test("parseReportBlock folds a two-line prose paragraph and a later prose lead", () => {
+  const response = [
+    "Conclusion: done",
+    "",
+    "The first prose line holds a finding.",
+    "The second prose line completes it.",
+    "",
+    "The evidence follows:",
+    "",
+    "- **Unit:** pass",
+    "- **Lint:** clean",
+    "",
+    "A closing prose line.",
+    "",
+    "Why: tests pass",
+    "",
+    "Blockers: none.",
+    "",
+    "Checks: npm test",
+    "",
+    "Notes:",
+    "- one",
+    "- two ending in a colon",
+    "  - nested one",
+    "  - nested two",
+    "- three",
+    "",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion:
+      "done; The first prose line holds a finding. The second prose line completes it.; The evidence follows: **Unit:** pass; **Lint:** clean; A closing prose line.",
+    why: "tests pass",
+    blockers: "none.",
+    checks: "npm test",
+    notes: "one; two ending in a colon, nested one, nested two; three",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies the issue #2069 fold keeps main's value for wrapped, nested, inline, and
+// cross-label inputs, so the new section rule changes no shape that main already parses. The
+// expected values were read from main at b8b2f17d.
+test("parseReportBlock keeps main's values for wrapped, nested, inline, and cross-label inputs", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: first line\n  second line\nBlockers: none"),
+  ).toEqual({
+    conclusion: "done",
+    why: "first line",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy:\n- a\n  - b\n    - c\nBlockers: none"),
+  ).toMatchObject({ why: "a, b, c" });
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: npm test\nNotes: n\nDeferred: d",
+    ),
+  ).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: "npm test",
+    notes: "n",
+    deferred: "d",
+  });
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nBlockers: none\nChecks: npm test\nNotes: none\nDeferred: none\nWhy: ok",
+    ),
+  ).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: "npm test",
+    notes: "none",
+    deferred: "none",
+  });
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: reason\n\nA prose paragraph.\n\nBlockers: none\nChecks: x",
+    ),
+  ).toMatchObject({ why: "reason" });
+});
+
+// Usefulness: verifies the issue #2069 shape keeps the section boundary rule, so two blank lines or
+// no blank line before a prose lead under the paragraph still refuse the dropped dash list.
+test("parseReportBlock returns null for a prose section outside the one-blank-line run", () => {
+  for (const tail of [
+    "Notes: keep\n\nA paragraph.\n\n\nA lead:\n- a",
+    "Notes: keep\n\nA paragraph.\nA lead:\n- a",
+    "Notes: keep\n\nA paragraph.\n\nA lead:\n1. a",
+  ]) {
+    expect(parseReportBlock(`${REPORT}\n${tail}`), tail).toBeNull();
+  }
+});
+
 // Usefulness: verifies a second dash run after one blank line joins the value, the #2005 replay row.
 test("parseReportBlock folds a second dash list that one blank line sets apart", () => {
   expect(parseReportBlock(`${REPORT}\nNotes: keep this\n\n- item one\n\n- item two`)).toMatchObject(
