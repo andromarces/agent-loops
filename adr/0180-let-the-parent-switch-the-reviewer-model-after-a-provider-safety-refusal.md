@@ -51,9 +51,9 @@ The refusal therefore needs a new session on that path too, not only after an `o
    its `turns` entry. The exception therefore reads stored state and never the error text. A state
    file written before the field exists refuses the exception, as it refuses a role with no turn
    history.
-3. **Start a new reviewer session.** On that path the call clears the reviewer `sessionId`, its
-   `sessionUnconfirmed` mark, and its `conversationReplaced` mark, whether or not the reviewer has
-   an earlier `ok` turn. The next reviewer dispatch then starts a new conversation and shows the
+3. **Start a new reviewer session.** On that path a successful model change clears the reviewer
+   `sessionId`, its `sessionUnconfirmed` mark, and its `conversationReplaced` mark, whether or not
+   the reviewer has an earlier `ok` turn. The next reviewer dispatch then starts a new conversation and shows the
    init task again through the `taskSentTo` rule in
    [Init task delivery](../docs/orchestrator/task-delivery.md). The worker session, the step count,
    and the turn history stay. A no-`ok` turn that failed for another cause, such as a model
@@ -98,8 +98,8 @@ The refusal therefore needs a new session on that path too, not only after an `o
 4. **Add a session-reset field to `modelChanges`.** Not taken. The cleared session id and the next
    new-session turn already show the restart, so the entry keeps its shape.
 5. **Reset the reviewer session on every no-`ok`-turn failure.** Not taken. A model refusal or
-   another failure can leave a usable id, and the CLI resumes it on the new model. Only the
-   provider-safety class clears the session.
+   another failure can leave a usable id, and the CLI resumes it on the new model. Only a
+   successful model change whose latest turn is the provider-safety class clears the session.
 
 ## Authors
 

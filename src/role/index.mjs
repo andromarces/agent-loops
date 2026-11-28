@@ -387,8 +387,8 @@ async function setModel(args) {
         at: new Date().toISOString(),
       });
       // The role keeps its stored session id, which is `null` or unconfirmed after a refused first
-      // turn. The provider-safety path starts a new session, so the old id, its unconfirmed mark, and
-      // a replaced-conversation mark go.
+      // turn. A successful model change on the provider-safety path starts a new session, so the old
+      // id, its unconfirmed mark, and a replaced-conversation mark go.
       if (afterProviderSafetyRefusal) {
         role.sessionId = null;
         delete role.sessionUnconfirmed;

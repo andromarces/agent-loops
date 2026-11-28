@@ -180,8 +180,8 @@ Role operations:
                                 --worker-model or --reviewer-model (exactly one), so a
                                 model that the CLI refused is repaired without a new
                                 run. A first Codex turn that a recognized model refusal
-                                ends charges no step. On the provider-safety path the
-                                reviewer starts a new session with the init task. Needs
+                                ends charges no step. A successful model change on that
+                                path starts a new session with the init task. Needs
                                 the stored --parent-session id. Refuses a role with an
                                 ok turn otherwise.
   wait-checks                   Wait for the required checks on --pr to settle, inside
