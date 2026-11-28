@@ -243,7 +243,7 @@ test("the closing-block rule states the one-blank-line list fold", () => {
     /A run that starts with a plain prose paragraph with no list and holds a plain prose lead with its dash list joins the value in order\./,
   );
   expect(reportBlock).toMatch(
-    /A horizontal rule starts no such run, and the run needs a plain prose lead\./,
+    /The run needs a plain prose lead with its dash list\. A paragraph followed by a bare dash list and no prose lead, a horizontal rule, and a bold lead start no such run\./,
   );
   expect(reportBlock).toMatch(
     /The lead follows the prose-lead rules, the whole-line bold heading included/,

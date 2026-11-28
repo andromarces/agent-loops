@@ -1094,27 +1094,22 @@ function isPlainProseLine(line) {
   return /^[^\s*_`>#]/.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
 }
 
-// A Setext heading underline: a line of `=` or `-` characters, with optional trailing spaces.
-const SETEXT_UNDERLINE = /^\s{0,3}(?:=+|-+)\s*$/;
-
 /**
- * True when the line can start or continue the issue #2069 run: a plain prose line with at least
- * one letter, no Markdown block marker, no leading or trailing pipe, and no Setext or thematic
- * rule. `isPlainProseLine` rejects a leading indent, `*`, `_`, a backtick, `>`, `#`, and a list
- * marker; `FENCE_LINE` rejects a tilde fence; this adds the letter, pipe, Setext, and thematic
- * checks.
+ * True when the line can start or continue the issue #2069 run: its first character is a Unicode
+ * letter or digit, it holds at least one letter, it is a plain prose line, it is no list item, and
+ * it ends with no pipe. The start rule excludes `<`, `[`, `|`, `>`, `#`, `=`, `-`, `*`, `_`, a
+ * backtick, and a fence by construction. `isPlainProseLine` keeps main's leading-backtick rule and
+ * rejects a leading space, `*`, `_`, a backtick, `>`, `#`, a list marker, and a label mention.
  * @param {string} line
  * @returns {boolean}
  */
 function isProseParagraphLine(line) {
   return (
+    /^[\p{L}\p{N}]/u.test(line) &&
     /\p{L}/u.test(line) &&
     isPlainProseLine(line) &&
-    !FENCE_LINE.test(line) &&
-    !line.startsWith("|") &&
-    !line.trimEnd().endsWith("|") &&
-    !SETEXT_UNDERLINE.test(line) &&
-    !THEMATIC_BREAK.test(line)
+    !isListLine(line) &&
+    !line.trimEnd().endsWith("|")
   );
 }
 
@@ -1228,8 +1223,8 @@ function proseSections(out, from) {
  * follows the prose-lead rules, the whole-line bold heading included. A run that starts with a
  * plain prose paragraph with no list and holds a plain prose lead with its dash list folds in order:
  * the paragraph and any later plain prose section with no list join as `; <prose>`, and each
- * paragraph's lines join with a space. A thematic break starts no such run, and the run needs a
- * plain prose lead. Markers drop, and sections join each other and an existing value with a
+ * paragraph's lines join with a space. A paragraph followed by a bare dash list and no prose lead
+ * starts no such run. Markers drop, and sections join each other and an existing value with a
  * semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table

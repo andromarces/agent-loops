@@ -1861,6 +1861,10 @@ test("parseReportBlock returns null for Markdown structure before an evidence li
     ["indent four", "    Test results"],
     ["numbers only", "12345"],
     ["trailing pipe", "a | b |"],
+    ["details", "<details>\n<summary>Details</summary>\n\nThe body.\n</details>"],
+    ["link reference", "[label]: https://example.com"],
+    ["html comment", "<!-- a comment -->"],
+    ["emphasis only", "*emphasis*"],
   ]) {
     const response = `Conclusion: done\nWhy: ok\nNotes: keep\n\n${block}\n\nEvidence:\n- a\nBlockers: none`;
     expect(parseReportBlock(response), name).toBeNull();
@@ -1873,6 +1877,32 @@ test("parseReportBlock keeps main's fold for a fenced block before an evidence l
   const response =
     "Conclusion: done\nWhy: ok\nNotes: keep\n\n```\nTest results\n```\n\nEvidence:\n- a\nBlockers: none";
   expect(parseReportBlock(response)).toMatchObject({ notes: "keep; Evidence: a" });
+});
+
+// Usefulness: verifies a run whose paragraphs hold inline code, a link, a path, a number start, and
+// a first-word colon still parses, because each opening line starts with a letter or a digit.
+test("parseReportBlock folds plain prose with inline markup and a first-word colon", () => {
+  for (const paragraph of [
+    "See `npm test` and the log.",
+    "Read the [guide](https://example.com) first.",
+    "The path is C:/repo/src/report.mjs.",
+    "2026 results are in.",
+    "Details: the run holds two sections.",
+    "Details:",
+  ]) {
+    const response = `Conclusion: done\nWhy: ok\nNotes: keep\n\n${paragraph}\n\nEvidence:\n- a\nBlockers: none`;
+    expect(parseReportBlock(response), paragraph).toMatchObject({
+      notes: `keep; ${paragraph}; Evidence: a`,
+    });
+  }
+});
+
+// Usefulness: verifies a two-line paragraph followed by a bare dash list and no prose lead keeps
+// main's null, because the issue #2069 run needs a plain prose lead with its dash list.
+test("parseReportBlock returns null for a paragraph followed by a bare dash list", () => {
+  const response =
+    "Conclusion: done\nWhy: ok\nNotes: keep\n\nA paragraph line.\nA second line.\n\n- a\nBlockers: none";
+  expect(parseReportBlock(response)).toBeNull();
 });
 
 // Usefulness: verifies a bold lead after a plain paragraph does not start the issue #2069 run, as
@@ -1946,9 +1976,10 @@ test("a repair of the issue #2069 shape 3 does not match", () => {
   expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(false);
 });
 
-// Usefulness: verifies a repair of the issue #2069 shape 3 matches when every earlier label holds
-// none, because the matcher allows an absent label to gain only a `none` finding.
-test("a repair of the issue #2069 shape 3 matches when every absent label holds none", () => {
+// Usefulness: verifies a repair of the issue #2069 shape 3 matches when it supplies `none` for all
+// four absent labels. The fixture's parsed block holds only Conclusion and Why; its Checks line is
+// `npm test` and its Notes line is `-` above the final Conclusion, and the repair replaces both.
+test("a repair of the issue #2069 shape 3 matches when it supplies none for the absent labels", () => {
   const repairedResponse = [
     "Conclusion: the tests pass.",
     "Why: npm test exited 0.",
