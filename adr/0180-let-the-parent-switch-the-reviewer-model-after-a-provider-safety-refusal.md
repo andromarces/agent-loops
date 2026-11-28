@@ -97,6 +97,7 @@ Andro Marces
 ## Links
 
 - [Issue #2065: Let the parent switch the reviewer model after a provider-safety refusal](https://github.com/andromarces/agent-loops/issues/2065)
+- [PR #2074: Let the parent switch the reviewer model after a provider-safety refusal](https://github.com/andromarces/agent-loops/pull/2074)
 - [ADR 0070: Replace the model of a role that has completed no turn](0070-replace-the-model-of-a-role-that-has-completed-no-turn.md)
 - [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
 - [ADR 0084: Charge no step for a first Codex turn that a model refusal ends](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md)
