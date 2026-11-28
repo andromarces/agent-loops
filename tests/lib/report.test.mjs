@@ -1847,6 +1847,33 @@ test("parseReportBlock returns null for a horizontal rule before a prose lead an
   }
 });
 
+// Usefulness: verifies the issue #2069 run starts only on real plain prose lines, so a Setext
+// heading, a pipe row, a table, a heading, a block quote, a numbers-only line, and a trailing pipe
+// keep main's null when an evidence list follows.
+test("parseReportBlock returns null for Markdown structure before an evidence list", () => {
+  for (const [name, block] of [
+    ["setext equals", "Test results\n==="],
+    ["setext dash", "Test results\n---"],
+    ["pipe row", "| a | b |"],
+    ["table", "| a | b |\n| --- | --- |"],
+    ["heading", "# Test results"],
+    ["quote", "> Test results"],
+    ["numbers only", "12345"],
+    ["trailing pipe", "a | b |"],
+  ]) {
+    const response = `Conclusion: done\nWhy: ok\nNotes: keep\n\n${block}\n\nEvidence:\n- a\nBlockers: none`;
+    expect(parseReportBlock(response), name).toBeNull();
+  }
+});
+
+// Usefulness: verifies a fenced block before an evidence list keeps main's fold, because the block
+// blanking removes the fenced lines and the ordinary section rule reads the list.
+test("parseReportBlock keeps main's fold for a fenced block before an evidence list", () => {
+  const response =
+    "Conclusion: done\nWhy: ok\nNotes: keep\n\n```\nTest results\n```\n\nEvidence:\n- a\nBlockers: none";
+  expect(parseReportBlock(response)).toMatchObject({ notes: "keep; Evidence: a" });
+});
+
 // Usefulness: verifies a bold lead after a plain paragraph does not start the issue #2069 run, as
 // in main, so the dash list under it stays unparseable.
 test("parseReportBlock returns null for a bold lead after a plain paragraph", () => {
@@ -1900,22 +1927,38 @@ const REORDERED_BLOCK = [
   "**Why:** npm test exited 0.",
 ].join("\n");
 
-// Usefulness: verifies the issue #2069 shape 3 repair cannot match, which is the issue's second
-// branch. The original parse reads from the last Conclusion line, so it holds only Conclusion and
-// Why, and a repair that adds Blockers, Checks, Notes, and Deferred gains labels that the matcher
-// refuses by design.
+// Usefulness: verifies the issue #2069 shape 3 repair does not match when it restores a substantive
+// value, which is the issue's second branch. The original parse reads from the last Conclusion line
+// and holds only Conclusion and Why; an absent label may gain only a `none` finding, and this repair
+// restores `Checks: npm test`, which the matcher refuses.
 test("a repair of the issue #2069 shape 3 does not match", () => {
   const repairedResponse = [
     "Conclusion: the tests pass.",
     "Why: npm test exited 0.",
     "Blockers: none.",
     "Checks: npm test",
-    "Notes: -",
+    "Notes: none",
     "Deferred: none",
   ].join("\n");
   const report = parseReportBlock(repairedResponse);
   expect(report).not.toBeNull();
   expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(false);
+});
+
+// Usefulness: verifies a repair of the issue #2069 shape 3 matches when every earlier label holds
+// none, because the matcher allows an absent label to gain only a `none` finding.
+test("a repair of the issue #2069 shape 3 matches when every absent label holds none", () => {
+  const repairedResponse = [
+    "Conclusion: the tests pass.",
+    "Why: npm test exited 0.",
+    "Blockers: none",
+    "Checks: none",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(true);
 });
 
 // Usefulness: verifies a repair may drop a wordless Notes dash as main allows, so the repair match

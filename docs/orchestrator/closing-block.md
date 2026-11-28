@@ -34,9 +34,11 @@ Under a `Label:` line, after the label value, any number of sections follow, wit
 before each. A section is a bare dash list, or a prose lead with its dash list. A run that starts
 with a plain prose paragraph with no list and holds a plain prose lead with its dash list joins the
 value in order. The paragraph and a later plain prose section with no list join as `; <prose>`, and
-each paragraph's lines join with a space. A Markdown horizontal rule (`---`, `***`, `___`, or
-`- - -`) is no prose paragraph and starts no such run, and a bold lead starts one only when the
-label line sits directly above it. The lead follows the prose-lead rules, the whole-line bold
+each paragraph's lines join with a space. A plain prose line for this run holds at least one letter,
+starts with no Markdown block marker (`#`, `>`, `|`, a list marker, a fence, or an indent), ends
+with no pipe, and is no Setext underline or thematic break such as `---` or `***`. Any other line
+starts no such run. The run needs a plain prose lead, so a bold lead after a paragraph keeps main's
+result. The lead follows the prose-lead rules, the whole-line bold
 heading included. The list sits directly under the
 lead, or after one blank line when the lead is plain prose. A section needs exactly one blank line
 before it. Two blank lines, or no blank line before it, start no new section, so the existing rules

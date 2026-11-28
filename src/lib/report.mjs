@@ -1094,15 +1094,28 @@ function isPlainProseLine(line) {
   return /^[^\s*_`>#]/.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
 }
 
+// A Setext heading underline: a line of `=` or `-` characters, with optional trailing spaces.
+const SETEXT_UNDERLINE = /^\s{0,3}(?:=+|-+)\s*$/;
+
 /**
- * True when the line is a real prose paragraph line: a plain prose line that is no Markdown
- * thematic break. A `---`, `***`, `___`, or `- - -` rule is no paragraph, so it never starts or
- * continues the issue #2069 run.
+ * True when the line can start or continue the issue #2069 run: a plain prose line with at least
+ * one letter, no Markdown block marker, no leading or trailing pipe, and no Setext or thematic
+ * rule. `isPlainProseLine` rejects a leading indent, `*`, `_`, a backtick, `>`, `#`, and a list
+ * marker; `FENCE_LINE` rejects a tilde fence; this adds the letter, pipe, Setext, and thematic
+ * checks.
  * @param {string} line
  * @returns {boolean}
  */
 function isProseParagraphLine(line) {
-  return isPlainProseLine(line) && !THEMATIC_BREAK.test(line);
+  return (
+    /\p{L}/u.test(line) &&
+    isPlainProseLine(line) &&
+    !FENCE_LINE.test(line) &&
+    !line.startsWith("|") &&
+    !line.trimEnd().endsWith("|") &&
+    !SETEXT_UNDERLINE.test(line) &&
+    !THEMATIC_BREAK.test(line)
+  );
 }
 
 const BOLD_PROSE_LINE = /^\*\*[^*]+\*\*$/;
@@ -1124,10 +1137,9 @@ function trimTrailingBlanks(out) {
 
 /**
  * The index of the label line that owns the prose run ending at `out[from]`, or -1 when the entries
- * above it are no run of prose sections. A section is one line or a paragraph of consecutive plain
- * prose lines, separated from its neighbour by exactly one blank line. A bold line, a thematic
- * break, a list, a table row, a label line with no blank above it, and two blank lines all supply
- * no owner.
+ * above it are no run of prose sections. A section is one line or a paragraph of consecutive lines
+ * that `isProseParagraphLine` accepts, separated from its neighbour by exactly one blank line. Any
+ * other line, a label line with no blank above it, and two blank lines all supply no owner.
  * @param {string[]} out
  * @param {number} from
  * @returns {number}
@@ -1157,9 +1169,9 @@ function proseSectionOwner(out, from) {
 }
 
 /**
- * The prose paragraph that starts at `lines[start]`: its consecutive non-blank plain prose lines
- * that are no thematic break, joined with a space, and the last line used. A line that a dash list
- * directly follows is a lead section, not part of this paragraph.
+ * The prose paragraph that starts at `lines[start]`: its consecutive non-blank lines that can
+ * start or continue the issue #2069 run, joined with a space, and the last line used. A line that a
+ * dash list directly follows is a lead section, not part of this paragraph.
  * @param {string[]} lines
  * @param {number} start
  * @returns {{ text: string, end: number }}
@@ -1216,8 +1228,9 @@ function proseSections(out, from) {
  * follows the prose-lead rules, the whole-line bold heading included. A run that starts with a
  * plain prose paragraph with no list and holds a plain prose lead with its dash list folds in order:
  * the paragraph and any later plain prose section with no list join as `; <prose>`, and each
- * paragraph's lines join with a space. A thematic break and a bold lead start no such run. Markers
- * drop, and sections join each other and an existing value with a semicolon and a space.
+ * paragraph's lines join with a space. A thematic break starts no such run, and the run needs a
+ * plain prose lead. Markers drop, and sections join each other and an existing value with a
+ * semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.

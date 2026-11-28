@@ -108,7 +108,7 @@ const SHAPE_3_REPAIRED = [
   "Why: npm test exited 0.",
   "Blockers: none.",
   "Checks: npm test",
-  "Notes: -",
+  "Notes: none",
   "Deferred: none",
 ].join("\n");
 
@@ -631,8 +631,8 @@ test("an issue #2015 shape names the mismatched repair outcome", async () => {
 
 // Usefulness: verifies the issue #2069 shape 3 repair names why it does not match, which is the
 // issue's second branch. The original parse reads from the last Conclusion line and holds only
-// Conclusion and Why, so the in-order repair gains the four labels above it and the turn names
-// mismatched with the original response kept.
+// Conclusion and Why; an absent label may gain only a `none` finding, and this repair restores
+// `Checks: npm test`, so the turn names mismatched with the original response kept.
 test("the issue #2069 shape 3 repair names mismatched", async () => {
   const agent = scripted([SHAPE_3, SHAPE_3_REPAIRED]);
   const result = await runChild({
