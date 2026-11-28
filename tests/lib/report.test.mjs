@@ -1858,6 +1858,7 @@ test("parseReportBlock returns null for Markdown structure before an evidence li
     ["table", "| a | b |\n| --- | --- |"],
     ["heading", "# Test results"],
     ["quote", "> Test results"],
+    ["indent four", "    Test results"],
     ["numbers only", "12345"],
     ["trailing pipe", "a | b |"],
   ]) {
