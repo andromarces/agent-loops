@@ -402,9 +402,9 @@ async function dispatchLocked(
     }
     return {
       exitCode: canceled ? 130 : 1,
-      payload: withSparseCheckout(
-        withLocalFiles(payload, localFiles, localFilesDiffer),
-        sparseCheckout,
+      payload: withBudget(
+        withSparseCheckout(withLocalFiles(payload, localFiles, localFilesDiffer), sparseCheckout),
+        state,
       ),
     };
   }
@@ -423,9 +423,12 @@ async function dispatchLocked(
   // non-zero command outcome for the calling parent.
   return {
     exitCode: result.status === "ok" ? 0 : 1,
-    payload: withSparseCheckout(
-      withLocalFiles(dispatchPayload(roleName, result), localFiles, localFilesDiffer),
-      sparseCheckout,
+    payload: withBudget(
+      withSparseCheckout(
+        withLocalFiles(dispatchPayload(roleName, result), localFiles, localFilesDiffer),
+        sparseCheckout,
+      ),
+      state,
     ),
   };
 }
@@ -649,6 +652,15 @@ function withLocalFiles(payload, localFiles, localFilesDiffer) {
       ? { localFilesDiffer: reportedLocalFileChanges(localFilesDiffer) }
       : {}),
   };
+}
+
+/**
+ * Adds the step budget that the state file holds after the turn. A first-turn model refusal has
+ * already been refunded, so its envelope reports the refunded count. A dispatch refused before it
+ * charges a step returns through `errorResult`, which adds no budget field.
+ */
+function withBudget(payload, state) {
+  return { ...payload, stepsUsed: state.stepsUsed, maxSteps: state.maxSteps };
 }
 
 /**

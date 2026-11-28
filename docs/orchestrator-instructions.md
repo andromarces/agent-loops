@@ -142,6 +142,12 @@ Example reviewer envelope:
 }
 ```
 
+- A dispatch envelope carries `stepsUsed` and `maxSteps` read from the state file after the
+  turn's charge. A first-turn model refusal reports the refunded `stepsUsed`. An `extend`
+  envelope carries the raised `maxSteps` with the unchanged `stepsUsed`. Report budget figures
+  from these fields, never from your own count. A dispatch refused before it charges a step, such
+  as `Step budget exhausted`, a lock refusal, or an argument or state refusal, carries neither
+  field.
 - `status: "error"` carries `error`. Treat it as not accepted.
 - An error envelope can carry `"transient": "capacity"`. It means the last failure
   event of the turn was a provider capacity reply, a provider outage and not a reviewer

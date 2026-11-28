@@ -395,6 +395,71 @@ test("dispatch past the step budget or in a terminal lifecycle is rejected", asy
   expect(worker.recorded.length).toBe(1);
 });
 
+// Usefulness: verifies acceptance #2066 — an ok dispatch envelope reports the step budget from the
+// state file after the turn's charge, so the parent reports the figures without its own count.
+test("an ok dispatch envelope reports the state budget after the charge", async () => {
+  const repo = await newCleanRunRepo(gitDouble);
+  const first = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  expect(first.exitCode).toBe(0);
+  const firstState = await readRepoState(repo);
+  expect(first.payload).toMatchObject({
+    stepsUsed: firstState.stepsUsed,
+    maxSteps: firstState.maxSteps,
+  });
+
+  const second = await executeRoleCommand(withRepo(dispatchArgv(), repo), basicDeps());
+  expect(second.exitCode).toBe(0);
+  const secondState = await readRepoState(repo);
+  expect(secondState.stepsUsed).toBe(2);
+  expect(second.payload).toMatchObject({ stepsUsed: 2, maxSteps: secondState.maxSteps });
+});
+
+// Usefulness: verifies acceptance #2066 — an error envelope from a turn that ran carries the charged
+// budget, so the parent can tell a failed turn from a refusal that charged no step.
+test("an error turn reports the charged step budget from the state file", async () => {
+  const repo = await newCleanRunRepo(gitDouble);
+  const adapter = recordingAdapter([]);
+  adapter.run = async () => {
+    throw new Error("the provider failed");
+  };
+
+  const failed = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: adapter, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(failed.exitCode).toBe(1);
+  const state = await readRepoState(repo);
+  expect(state.stepsUsed).toBe(1);
+  expect(failed.payload).toMatchObject({
+    status: "error",
+    stepsUsed: 1,
+    maxSteps: state.maxSteps,
+  });
+});
+
+// Usefulness: verifies acceptance #2066 — a budget-exhausted refusal charges no step and omits both
+// fields, so the parent never reads an invented or stale count from a refused call.
+test("a budget-exhausted refusal omits the budget fields and charges no step", async () => {
+  const repo = await newCleanRunRepo(gitDouble);
+  const worker = recordingAdapter([]);
+  const agents = { fake1: worker, fake2: recordingAdapter([]) };
+  await executeRoleCommand(withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "1"]), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+
+  const over = await executeRoleCommand(withRepo(dispatchArgv(), repo), {
+    agents,
+    stdin: stdinPrompt,
+  });
+  expect(over.exitCode).toBe(1);
+  expect(over.payload.error).toContain("Step budget exhausted");
+  expect(over.payload.stepsUsed).toBeUndefined();
+  expect(over.payload.maxSteps).toBeUndefined();
+  expect(worker.recorded.length).toBe(1);
+  expect((await readRepoState(repo)).stepsUsed).toBe(1);
+});
+
 // Usefulness: verifies acceptance of #1565 — a first Codex turn that fails on a recognized model
 // refusal charges no step and names the refused model, so the parent can run role set-model and
 // dispatch again inside the same budget.
@@ -424,6 +489,23 @@ test("a first-turn model refusal charges no step and names the refused model", a
   });
   expect(repaired.exitCode).toBe(0);
   expect((await readRepoState(repo)).stepsUsed).toBe(1);
+});
+
+// Usefulness: verifies acceptance #2066 — a refunded first-turn model refusal reports the refunded
+// stepsUsed and the unchanged maxSteps, so the parent sees the budget it can still spend.
+test("a refunded first-turn refusal reports the refunded stepsUsed", async () => {
+  const repo = await newCleanRunRepo(gitDouble);
+
+  const refused = await executeRoleCommand(
+    withRepo(dispatchArgv([...INIT_OVERRIDES, "--max-steps", "1"]), repo),
+    {
+      agents: { fake1: refusingAdapter("gpt-6.1"), fake2: recordingAdapter([]) },
+      stdin: stdinPrompt,
+    },
+  );
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload).toMatchObject({ status: "error", stepsUsed: 0, maxSteps: 1 });
+  expect((await readRepoState(repo)).stepsUsed).toBe(0);
 });
 
 // Usefulness: verifies acceptance of #1565 on the observed reviewer case — the first turn of the

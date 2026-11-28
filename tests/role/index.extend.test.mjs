@@ -6,6 +6,7 @@ import { statePaths, writeState } from "../../src/lib/runstate.mjs";
 import { SPAWNED_RUN_ENV, spawnedRunMarker } from "../../src/lib/exec.mjs";
 import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import {
+  basicDeps,
   cleanup,
   dispatchArgv,
   initRun,
@@ -129,6 +130,23 @@ test("extend records the change in budgetChanges beside an intact turn history",
   for (const change of state.budgetChanges) {
     expect(Number.isNaN(Date.parse(change.at))).toBe(false);
   }
+});
+
+// Usefulness: verifies acceptance #2066 — extend reports the new maxSteps beside the unchanged
+// stepsUsed, so the parent reads the raised budget from the envelope instead of its own count.
+test("extend reports the new maxSteps with the unchanged stepsUsed", async () => {
+  const repo = await startRun(5, basicDeps().agents);
+  await executeRoleCommand(withRepo(dispatchArgv(), repo), basicDeps());
+
+  const result = await executeRoleCommand(withRepo(parentExtendArgv("--max-steps", "8"), repo));
+  expect(result.exitCode).toBe(0);
+  expect(result.payload).toEqual({
+    status: "ok",
+    lifecycle: "active",
+    maxSteps: 8,
+    stepsUsed: 2,
+  });
+  expect(await readRepoState(repo)).toMatchObject({ maxSteps: 8, stepsUsed: 2 });
 });
 
 // Usefulness: verifies a value that is not a real raise is refused and leaves
