@@ -25,8 +25,9 @@ vi.mock("../../src/lib/exec.mjs", async (importActual) => {
   };
 });
 
-// Usefulness: verifies acceptance #955 — a Codex turn leaves no new entry in the inherited
-// temporary directory, because the CLI gets a private per-turn one that the runtime removes.
+// Usefulness: verifies acceptance #955 — when the runtime creates the private per-turn directory,
+// a Codex turn leaves no new entry in the inherited temporary directory, because the CLI uses that
+// directory and the runtime removes it.
 test.each([
   ["reviewer", { readOnly: true, sandbox: "none", role: "reviewer" }],
   ["worker", { role: "worker" }],

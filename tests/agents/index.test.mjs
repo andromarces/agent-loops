@@ -125,9 +125,9 @@ test.each(["claude", "codex", "copilot", "agy", "opencode"])(
 );
 
 // Requirement (#1178, ADR 0068): a Claude, agy, Copilot, or opencode turn runs with a private
-// temporary directory, so a file that the CLI writes through `TMPDIR` never lands in the inherited
-// directory, and the runtime removes the private one on a clean turn and on a failed one. Not
-// redundant: the Codex tests cover only the Codex adapter.
+// temporary directory when creation succeeds, so a file that the CLI writes through `TMPDIR` never
+// lands in the inherited directory, and the runtime removes the private one on a clean turn and on
+// a failed one. Not redundant: the Codex tests cover only the Codex adapter.
 describe.each(["claude", "agy", "copilot", "opencode"])(
   "%s private turn temporary directory",
   (kind) => {

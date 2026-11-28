@@ -36,7 +36,8 @@ export { normalizeAgent };
  * when the runtime creates one; a turn whose directory creation fails runs in the inherited
  * directory (ADR 0068). It reads the child environment from `options.env`, which sets `TMPDIR`,
  * `TEMP`, and `TMP` to the private directory when creation succeeds, and is undefined when
- * creation fails, so the child inherits the parent temporary directory. It also passes
+ * creation fails, unless the caller passed its own `env`, which is kept. A child with no `env`
+ * inherits the parent temporary directory. It also passes
  * `options.onTurnChild` to `exec` as `onSpawn`. The Codex adapter has no flag, because it creates
  * its own directory (ADR 0047).
  */
@@ -50,7 +51,7 @@ export const defaultAgents = {
 
 export const supportedAgents = new Set([...Object.keys(defaultAgents), ...AGENT_ALIASES.keys()]);
 
-/** Runs one turn on the adapter of `state.kind`, in a private temporary directory when the adapter asks for one. Throws an error with `isCanceled` when `options.signal` is aborted by the time the adapter returns. */
+/** Runs one turn on the adapter of `state.kind`, in a private temporary directory when the adapter asks for one and the runtime creates it. Throws an error with `isCanceled` when `options.signal` is aborted by the time the adapter returns. */
 export async function runAgent(state, prompt, options = {}, agents = defaultAgents) {
   const kind = normalizeAgent(state.kind);
   const adapter = agents[kind];
