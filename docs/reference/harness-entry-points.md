@@ -27,7 +27,9 @@ command in the instructions with that resolved invocation, so a Git Bash session
 that cannot resolve the `agent-loop` command still starts a guarded run (#151).
 `harness-check` exits 0 for a match, 3 when another harness is the nearest
 ancestor, and 1 when the check cannot run or finds no harness ancestor, so the
-skill separates a refusal from a check that did not decide. The Claude Code
+skill separates a refusal from a check that did not decide. A skill runs it
+before a `role` init call and before a `batch start` command, with the same exit
+handling for both. The Claude Code
 skill names the instructions file by path with no `@` line, because an `@` line
 in a skill body did not attach the file in a live session (#1055).
 
@@ -62,33 +64,39 @@ The read step is verified on Windows 11, and a capped read with an offset is not
   model. The skill sets `metadata.opencode/autoinvoke: false`, so OpenCode drops
   it from the model's skill list and the model cannot auto-invoke it for an
   `/agent-loop` request; the OpenCode plugin command then owns `/agent-loop`.
-  Before the init dispatch call the skill runs the installed CLI by absolute path
-  with `harness-check claude`; exit 3 stops the run because another harness owns
-  the session, and any other non-zero exit stops the run because the check could
-  not run or found no harness ancestor.
+  Before the `role` init dispatch call and before a `batch start` command the
+  skill runs the installed CLI by absolute path with `harness-check claude`;
+  exit 3 stops the run because another harness owns the session, and any other
+  non-zero exit stops the run because the check could not run or found no harness
+  ancestor.
   - Both cover the literal
     `${CLAUDE_SESSION_ID}` that OpenCode leaves unexpanded. The resolved invocation
     then replaces `agent-loop` for the init dispatch and every later command, so the
     run does not need the `agent-loop` command on PATH. Its body passes
-    `${CLAUDE_SESSION_ID}` as `--parent-session` on the init dispatch call.
+    `${CLAUDE_SESSION_ID}` as `--parent-session` on the `role` init dispatch call.
+    A batch request runs one `batch start` command, which takes no
+    `--parent-session`, so it passes no session id.
 - The OpenCode entry point is a user plugin at
   `~/.config/opencode/plugins/parent-guard.ts`, loaded automatically from that
   directory. Stored command templates expose no session id, so the plugin
   registers the `/agent-loop` command itself: its executor reads
   `CommandInvocation.sessionID` and carries that id into the orchestrator
-  prompt, and the init dispatch call passes it as `--parent-session`. The shared
-  Claude and Codex skills set `metadata.opencode/autoinvoke: false`, so OpenCode
+  prompt, and the `role` init dispatch call passes it as `--parent-session`. A
+  batch request runs one `batch start` command, which takes no
+  `--parent-session`. The shared Claude and Codex skills set `metadata.opencode/autoinvoke: false`, so OpenCode
   drops them from the model's skill list and the plugin command is the only
   `/agent-loop` entry point.
 - The Codex CLI skill (`~/.agents/skills/agent-loop/SKILL.md`) activates only
-  through `$agent-loop`. Before the init call it runs the installed CLI by
-  absolute path with `harness-check codex`, which uses the same exit codes. Exit
-  3 means another harness is the nearest ancestor; any other non-zero exit means
+  through `$agent-loop`. Before the `role` init call and before a `batch start`
+  command it runs the installed CLI by absolute path with `harness-check codex`,
+  which uses the same exit codes. Exit 3 means another harness is the nearest
+  ancestor; any other non-zero exit means
   the check could not run or found no harness ancestor. Either stops the run: an
   environment check cannot
   decide it, because a nested harness inherits `CODEX_THREAD_ID`. The resolved
   invocation replaces `agent-loop` for every command in the instructions. The
-  skill passes `CODEX_THREAD_ID` as `--parent-session`.
+  skill passes `CODEX_THREAD_ID` as `--parent-session` on the `role` init call. A
+  batch request runs one `batch start` command, which takes no `--parent-session`.
   - Use `$env:CODEX_THREAD_ID` in
     PowerShell and `$CODEX_THREAD_ID` in POSIX shells. In PowerShell, pass
     `--cwd $worktree` after setting `$worktree = (Get-Location).Path`. The CLI
@@ -107,19 +115,22 @@ The read step is verified on Windows 11, and a capped read with an offset is not
 - The Antigravity CLI entry point is a skill at
   `~/.gemini/antigravity-cli/skills/agent-loop/SKILL.md`, activated as
   `/agent-loop` in an interactive session. It runs the installed CLI by absolute
-  path with `harness-check antigravity` before the init call, and it replaces
+  path with `harness-check antigravity` before the `role` init call or a
+  `batch start` command, and it replaces
   `agent-loop` with that resolved invocation for every command in the
   instructions. Then it passes
-  `ANTIGRAVITY_CONVERSATION_ID` as `--parent-session`; use
+  `ANTIGRAVITY_CONVERSATION_ID` as `--parent-session` on the `role` init call; a
+  batch request runs `batch start`, which takes no `--parent-session`. Use
   `$env:ANTIGRAVITY_CONVERSATION_ID` in PowerShell. This environment variable is
   an undocumented dependency and can change on upgrade, and child processes
   inherit it. When it is absent, or when the harness check stops the run, do not
   start a run.
 - Universal fallback: reference `docs/orchestrator-instructions.md` in the first
   prompt and follow it when the harness entry point is not installed. The
-  fallback must still pass the harness session id as `--parent-session`; the CLI
-  refuses an init without it. The headless `agent-loop` command is the explicit
-  unguarded path.
+  fallback must still pass the harness session id as `--parent-session` on a
+  `role` init; the CLI refuses an init without it. A batch request runs
+  `batch start`, which takes no `--parent-session`. The headless `agent-loop`
+  command is the explicit unguarded path.
 - On Copilot CLI, the installed `~/.copilot/hooks/parent-guard.json` registers
   PascalCase `PreToolUse`, so the payload carries `session_id` and `tool_name`,
   and the hook prints the flat `permissionDecision` object that Copilot CLI

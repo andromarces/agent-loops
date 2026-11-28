@@ -82,7 +82,7 @@ test("Copilot launcher prompt is the instruction sentences joined by one space",
     `Read \`${instructionsPath}\` and follow it for this request. ` +
       "The task and role settings are: " +
       "Line one. Line two. " +
-      "This Copilot CLI session id is `session-1`. Pass it as `--parent-session` on the init dispatch call.",
+      "This Copilot CLI session id is `session-1`. Pass it as `--parent-session` on the `role` init dispatch call. A batch request runs one `batch start` command, which takes no `--parent-session`; pass no session id there.",
   );
 });
 
@@ -95,7 +95,7 @@ test("Copilot launcher prompt keeps quotes in the task unchanged", () => {
   expect(prompt).toBe(
     `Read \`${instructionsPath}\` and follow it for this request. ` +
       `The task and role settings are: ${task} ` +
-      "This Copilot CLI session id is `session-2`. Pass it as `--parent-session` on the init dispatch call.",
+      "This Copilot CLI session id is `session-2`. Pass it as `--parent-session` on the `role` init dispatch call. A batch request runs one `batch start` command, which takes no `--parent-session`; pass no session id there.",
   );
 });
 

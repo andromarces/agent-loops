@@ -23,4 +23,5 @@ $ARGUMENTS
 
 {{HARNESS_CHECK}}
 
-On the init dispatch call, pass ${CLAUDE_SESSION_ID} as `--parent-session`.
+On the `role` init dispatch call, pass ${CLAUDE_SESSION_ID} as `--parent-session`. A batch request
+runs one `batch start` command, which takes no `--parent-session`; pass no session id there.

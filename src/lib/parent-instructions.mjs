@@ -7,6 +7,6 @@ export function parentInstructionParts({ harnessName, instructionsPath, sessionI
     `Read \`${instructionsPath}\` and follow it for this request.`,
     "The task and role settings are:",
     task,
-    `This ${harnessName} session id is \`${sessionId}\`. Pass it as \`--parent-session\` on the init dispatch call.`,
+    `This ${harnessName} session id is \`${sessionId}\`. Pass it as \`--parent-session\` on the \`role\` init dispatch call. A batch request runs one \`batch start\` command, which takes no \`--parent-session\`; pass no session id there.`,
   ];
 }

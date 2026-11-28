@@ -3,6 +3,7 @@ import { join, posix } from "node:path";
 import { afterEach, expect, test } from "vite-plus/test";
 import { HARNESS_ORDER } from "../../src/lib/harnesses.mjs";
 import { buildTargets } from "../../src/install/targets.mjs";
+import { parentInstructionParts } from "../../src/lib/parent-instructions.mjs";
 import {
   PACKAGE_ROOT,
   makeHome,
@@ -255,13 +256,42 @@ test.each([
   const targets = await targetPaths(harness, home);
   const skill = targets.files.find((file) => file.path.endsWith("SKILL.md")).content;
   const expected =
-    `Before the init dispatch call, run \`${gateCommand(harness)}\`. It exits 0 only when the ` +
+    `Before the \`role\` init dispatch call and before a \`batch start\` command, run ` +
+    `\`${gateCommand(harness)}\`. It exits 0 only when the ` +
     `nearest harness process above this shell is ${label}. If it exits 3, stop and report that ` +
     "another harness owns the session; do not start a run. If it exits with any other non-zero " +
     "code, stop and report that the check could not run or found no harness ancestor, which is " +
     `distinct from a harness refusal. ${closing}`;
   expect(skill.replace(/\s+/g, " ")).toContain(expected);
   expect(skill).not.toContain("{{HARNESS_CHECK");
+});
+
+// Usefulness: verifies #2062 acceptance — a batch request runs one `batch start`
+// command and never a `role` init, so the rendered skill text scopes the session id
+// to `role` init, names the batch case, and runs the harness check before
+// `batch start` too. The shared entry-point prompt carries the same scope.
+test("the entry points name the batch case for the session id and the harness check", async () => {
+  const home = await makeHome();
+  const batchLine =
+    "A batch request runs one `batch start` command, which takes no `--parent-session`";
+  for (const harness of ["claude", "codex", "antigravity"]) {
+    const skill = (await targetPaths(harness, home)).files.find((file) =>
+      file.path.endsWith("SKILL.md"),
+    ).content;
+    const text = skill.replace(/\s+/g, " ");
+    expect(text, harness).toContain(batchLine);
+    expect(text, harness).toContain(
+      "Before the `role` init dispatch call and before a `batch start` command, run",
+    );
+  }
+  const promptLine = parentInstructionParts({
+    harnessName: "OpenCode",
+    instructionsPath: "docs/orchestrator-instructions.md",
+    sessionId: "ses_test",
+    task: "Task.",
+  }).at(-1);
+  expect(promptLine).toContain("on the `role` init dispatch call");
+  expect(promptLine).toContain(batchLine);
 });
 
 // Usefulness: verifies the #808 acceptance — the Codex and Antigravity skills render the session-channel
@@ -274,12 +304,13 @@ test.each([
   const targets = await targetPaths(harness, home);
   const skill = targets.files.find((file) => file.path.endsWith("SKILL.md")).content;
   const expected =
-    `Use the invocation text as the task and role settings. Before the init dispatch call, verify ` +
+    `Use the invocation text as the task and role settings. Before the \`role\` init dispatch call, verify ` +
     `that the active shell has \`${variable}\`. Do not print its value. In PowerShell, pass ` +
     `\`$env:${variable}\` as \`--parent-session\`. Set \`$worktree = (Get-Location).Path\` and pass ` +
     "`--cwd $worktree`. Do not embed `$PWD` in POSIX-style quotes. In POSIX shells, pass " +
     `\`--cwd "$PWD"\` and \`$${variable}\`. If the variable is absent, report the missing session ` +
-    "channel and do not start the run.";
+    "channel and do not start the run. A batch request runs one `batch start` command, which takes no " +
+    "`--parent-session`; pass no session id there.";
   expect(skill.replace(/\s+/g, " ")).toContain(expected);
   expect(skill).not.toContain("{{SESSION_CHANNEL");
 });
@@ -302,7 +333,9 @@ test.each([
     const start = paragraphs.findIndex((paragraph) =>
       paragraph.startsWith("Use the invocation text"),
     );
-    const end = paragraphs.findIndex((paragraph) => paragraph.endsWith("do not start the run."));
+    const end = paragraphs.findIndex((paragraph) =>
+      paragraph.endsWith("pass no session id there."),
+    );
     expect(start).toBeGreaterThan(0);
     expect(end - start + 1).toBe(count);
     if (count === 2) {
