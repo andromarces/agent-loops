@@ -8,11 +8,27 @@ export class RoleError extends Error {}
 
 const consume = () => {};
 
+/**
+ * The budget of the state that dispatch last saved, when the error carries one. It keeps an error
+ * envelope short and reports only values that reached the state file.
+ */
+function savedBudgetFields(err) {
+  const saved = readProp(err, "savedBudget");
+  const stepsUsed = readProp(saved, "stepsUsed");
+  const maxSteps = readProp(saved, "maxSteps");
+  return Number.isSafeInteger(stepsUsed) && Number.isSafeInteger(maxSteps)
+    ? { stepsUsed, maxSteps }
+    : {};
+}
+
 /** One error envelope for a thrown value. A cancel keeps exit 130. */
 export function errorResult(err) {
   // A cancel outside the turn `try` block, such as the process-table read of a resume or an init.
   if (readProp(err, "isCanceled")) {
-    return { exitCode: 130, payload: { status: "error", error: SIGINT_MESSAGE } };
+    return {
+      exitCode: 130,
+      payload: { status: "error", error: SIGINT_MESSAGE, ...savedBudgetFields(err) },
+    };
   }
   try {
     // A wait that failed with a `gh` child whose exit it never observed says so. The parent
@@ -22,6 +38,7 @@ export function errorResult(err) {
       payload: {
         status: "error",
         error: errorMessage(err),
+        ...savedBudgetFields(err),
         ...(readProp(err, "childExitUnconfirmed") === true ? { childExitUnconfirmed: true } : {}),
       },
     };
@@ -33,6 +50,7 @@ export function errorResult(err) {
       payload: {
         status: "error",
         error: canceled ? SIGINT_MESSAGE : UNREADABLE_MESSAGE,
+        ...savedBudgetFields(err),
       },
     };
   }

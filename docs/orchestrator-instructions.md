@@ -124,6 +124,8 @@ Example reviewer envelope:
 {
   "role": "reviewer",
   "status": "ok",
+  "stepsUsed": 3,
+  "maxSteps": 40,
   "report": {
     "conclusion": "...",
     "why": "...",
@@ -142,6 +144,14 @@ Example reviewer envelope:
 }
 ```
 
+- A dispatch envelope carries `stepsUsed` and `maxSteps` from the state that was saved under
+  the lock after the turn's charge or refund. When the runtime refunds a first-turn model refusal,
+  the envelope reports the refunded `stepsUsed`. An `extend` envelope carries the raised
+  `maxSteps` with the unchanged `stepsUsed`. Report budget figures from these fields, never from
+  your own count. A dispatch refused before it charges a step, such as `Step budget exhausted`, a
+  lock refusal, or an argument or state refusal, carries neither field. The forced-exit envelope of
+  a second SIGINT also omits both fields, because a state save can be in flight; after the restart,
+  read the state file as the recovery section states.
 - `status: "error"` carries `error`. Treat it as not accepted.
 - An error envelope can carry `"transient": "capacity"`. It means the last failure
   event of the turn was a provider capacity reply, a provider outage and not a reviewer

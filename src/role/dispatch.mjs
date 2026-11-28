@@ -170,6 +170,9 @@ export async function dispatch(
   if (!args.role) {
     throw new RoleError("dispatch requires --role worker or reviewer.");
   }
+  // The budget of the state that was last saved under the lock, reported by an error that ends
+  // dispatch after that save. A forced exit omits the fields, because a save can be in flight.
+  const savedBudget = {};
   rejectMisplacedFlags(args, "dispatch");
 
   // The task file becomes `--task`, so init detection and the init checks see one source.
@@ -199,8 +202,12 @@ export async function dispatch(
         readProcessCommands,
         onMainWatch,
         mainWatchDeadlineMs,
+        savedBudget,
       }),
     );
+  } catch (err) {
+    attachSavedBudget(err, savedBudget);
+    throw err;
   } finally {
     await onEvent.flush();
   }
@@ -218,6 +225,7 @@ async function dispatchLocked(
     readProcessCommands,
     onMainWatch,
     mainWatchDeadlineMs,
+    savedBudget,
   },
 ) {
   const existing = await readState(paths.stateFile);
@@ -292,6 +300,7 @@ async function dispatchLocked(
   state.lifecycle = "dispatched";
   state.lastDispatch = { role: roleName, prompt, at: new Date().toISOString() };
   await writeState(paths.stateFile, state);
+  rememberSavedBudget(savedBudget, state);
 
   const role = { ...state.roles[roleName] };
   let result;
@@ -395,6 +404,7 @@ async function dispatchLocked(
       lifecycle: canceled ? "interrupted" : "halted",
       stateFile: paths.stateFile,
       onEvent,
+      savedBudget,
     });
     // Only a terminal lifecycle drops the work tree lock; an interrupted run keeps it.
     if (!canceled) {
@@ -402,9 +412,9 @@ async function dispatchLocked(
     }
     return {
       exitCode: canceled ? 130 : 1,
-      payload: withSparseCheckout(
-        withLocalFiles(payload, localFiles, localFilesDiffer),
-        sparseCheckout,
+      payload: withBudget(
+        withSparseCheckout(withLocalFiles(payload, localFiles, localFilesDiffer), sparseCheckout),
+        state,
       ),
     };
   }
@@ -417,15 +427,19 @@ async function dispatchLocked(
     lifecycle: "active",
     stateFile: paths.stateFile,
     onEvent,
+    savedBudget,
   });
 
   // The dispatch itself succeeded, but a child error result is still a
   // non-zero command outcome for the calling parent.
   return {
     exitCode: result.status === "ok" ? 0 : 1,
-    payload: withSparseCheckout(
-      withLocalFiles(dispatchPayload(roleName, result), localFiles, localFilesDiffer),
-      sparseCheckout,
+    payload: withBudget(
+      withSparseCheckout(
+        withLocalFiles(dispatchPayload(roleName, result), localFiles, localFilesDiffer),
+        sparseCheckout,
+      ),
+      state,
     ),
   };
 }
@@ -459,13 +473,20 @@ function refundModelRefusalStep(state, roleName) {
  * Records the result of one dispatched turn: the lifecycle, `lastResult`, the turn history, and the
  * role session. It then writes the state and emits the `result` event.
  */
-async function recordResult(state, roleName, role, result, { lifecycle, stateFile, onEvent }) {
+async function recordResult(
+  state,
+  roleName,
+  role,
+  result,
+  { lifecycle, stateFile, onEvent, savedBudget },
+) {
   state.lifecycle = lifecycle;
   const at = new Date().toISOString();
   state.lastResult = { ...result, at };
   recordTurn(state, roleName, result, at);
   recordRoleSession(state.roles[roleName], role);
   await writeState(stateFile, state);
+  rememberSavedBudget(savedBudget, state);
   onEvent({ type: "result", role: roleName, result, stepsUsed: state.stepsUsed });
 }
 
@@ -649,6 +670,36 @@ function withLocalFiles(payload, localFiles, localFilesDiffer) {
       ? { localFilesDiffer: reportedLocalFileChanges(localFilesDiffer) }
       : {}),
   };
+}
+
+/**
+ * Adds the step budget from the state that was just saved under the lock. A refunded first-turn
+ * model refusal has already been saved, so its envelope reports the refunded count. A dispatch
+ * refused before it charges a step returns through `errorResult`, which adds no budget field.
+ */
+function withBudget(payload, state) {
+  return { ...payload, stepsUsed: state.stepsUsed, maxSteps: state.maxSteps };
+}
+
+/** Records the budget of a state that was just saved, for an error that ends dispatch after it. */
+function rememberSavedBudget(savedBudget, state) {
+  savedBudget.stepsUsed = state.stepsUsed;
+  savedBudget.maxSteps = state.maxSteps;
+}
+
+/**
+ * Attaches the last saved budget to an error that ends dispatch after that save, so the error
+ * envelope reports the persisted charge. An error before the charge carries none.
+ */
+function attachSavedBudget(err, savedBudget) {
+  if (
+    err &&
+    (typeof err === "object" || typeof err === "function") &&
+    Number.isSafeInteger(savedBudget.stepsUsed) &&
+    Number.isSafeInteger(savedBudget.maxSteps)
+  ) {
+    err.savedBudget = { stepsUsed: savedBudget.stepsUsed, maxSteps: savedBudget.maxSteps };
+  }
 }
 
 /**

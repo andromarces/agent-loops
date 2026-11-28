@@ -525,6 +525,8 @@ export async function main(argv, { agents = defaultAgents, gh } = {}) {
       if (envelope.state === "writing") return envelope.done;
       if (envelope.state === "done") return undefined;
       envelope.state = "done";
+      // A state save can be in flight, so the cancel envelope names no budget. The parent reads
+      // the state file after the restart (ADR 0033).
       const { payload } = errorResult({ isCanceled: true });
       writeAllSync(1, `${JSON.stringify(payload)}\n`);
       return undefined;
