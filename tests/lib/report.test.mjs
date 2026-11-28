@@ -1758,6 +1758,183 @@ test("parseReportBlock returns null for a prose section outside the one-blank-li
   }
 });
 
+// Usefulness: verifies the issue #2069 shape 3 parses directly, so the parser holds the values a
+// reordered block writes above its final Conclusion and Why lines. Main returns null for this shape.
+test("parseReportBlock parses the issue #2069 reordered block", () => {
+  const response = [
+    "The run is verified.",
+    "",
+    "Blockers: none.",
+    "Checks: npm test",
+    "Notes: -",
+    "Deferred: none",
+    "",
+    "**Conclusion:** the tests pass.",
+    "",
+    "**Why:** npm test exited 0.",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "the tests pass.",
+    why: "npm test exited 0.",
+    blockers: "none.",
+    checks: "npm test",
+    notes: "-",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies the issue #2069 fold stays on the shapes it names, so trailing prose after
+// two bare dash lists with no prose lead stays unparseable as it does in main.
+test("parseReportBlock returns null for trailing prose after bare dash sections", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: x\n- a\n\n- b\n\nTrailing prose.`)).toBeNull();
+});
+
+// Usefulness: verifies a two-line trailing paragraph in the issue #2069 run joins its lines with a
+// space, so the documented paragraph fold holds for the trailing section of shape 2.
+test("parseReportBlock folds a two-line trailing paragraph in the issue #2069 run", () => {
+  const response = [
+    "Conclusion: done",
+    "",
+    "A leading paragraph.",
+    "",
+    "Evidence:",
+    "- a",
+    "",
+    "The first trailing line.",
+    "The second trailing line.",
+    "",
+    "Why: ok",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion:
+      "done; A leading paragraph.; Evidence: a; The first trailing line. The second trailing line.",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a repair cannot restore a Checks value from an earlier block, as main refuses
+// it (issue #2069 review). The final block holds only Conclusion and Why.
+test("a repair cannot restore Checks from an earlier block", () => {
+  const original = [
+    "Conclusion: earlier",
+    "Why: earlier",
+    "Blockers: none",
+    "Checks: npm test passed",
+    "",
+    "Conclusion: done",
+    "Why: ok",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test passed",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(false);
+});
+
+// The issue #2069 reordered block: four labels above a final Conclusion and Why.
+const REORDERED_BLOCK = [
+  "Blockers: none.",
+  "Checks: npm test",
+  "Notes: -",
+  "Deferred: none",
+  "",
+  "**Conclusion:** the tests pass.",
+  "",
+  "**Why:** npm test exited 0.",
+].join("\n");
+
+// Usefulness: verifies a repair that restates the issue #2069 reordered values matches, a wordless
+// Notes dash included (issue #2069 review).
+test("a repair accepts the issue #2069 reordered values", () => {
+  const repairedResponse = [
+    "Conclusion: the tests pass.",
+    "Why: npm test exited 0.",
+    "Blockers: none.",
+    "Checks: npm test",
+    "Notes: -",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(true);
+});
+
+// Usefulness: verifies a repair that drops a label the parser held, a wordless Notes dash included,
+// is refused (issue #2069 review).
+test("a repair refuses a removed label in the issue #2069 reordered block", () => {
+  const repairedResponse = [
+    "Conclusion: the tests pass.",
+    "Why: npm test exited 0.",
+    "Blockers: none.",
+    "Checks: npm test",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(false);
+});
+
+// Usefulness: verifies a repair that adds a label the parser did not hold is refused, even when the
+// rest is a reordered restatement (issue #2069 review).
+test("a repair refuses an added label in the issue #2069 reordered block", () => {
+  const original = [
+    "Blockers: none.",
+    "Checks: npm test",
+    "Deferred: none",
+    "",
+    "**Conclusion:** the tests pass.",
+    "",
+    "**Why:** npm test exited 0.",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: the tests pass.",
+    "Why: npm test exited 0.",
+    "Blockers: none.",
+    "Checks: npm test",
+    "Notes: added",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(false);
+});
+
+// Usefulness: verifies a repair that changes one value while reordering is refused (issue #2069
+// review). The reorder alone never excuses a changed word.
+test("a repair refuses a changed value in the issue #2069 reordered block", () => {
+  const repairedResponse = [
+    "Conclusion: the tests pass.",
+    "Why: npm test exited 0.",
+    "Blockers: none.",
+    "Checks: npm test failed",
+    "Notes: -",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(false);
+});
+
+// Usefulness: verifies a response with no Conclusion line still parses when plain prose supplies
+// the conclusion, so the worker prompt must not claim it has no block (issue #2069 review).
+test("parseReportBlock takes prose above the first label as Conclusion without a Conclusion line", () => {
+  expect(parseReportBlock("Done.\n\nBlockers: none\nWhy: ok\nChecks: x")).toMatchObject({
+    conclusion: "Done.",
+    why: "ok",
+    blockers: "none",
+    checks: "x",
+  });
+});
+
 // Usefulness: verifies a second dash run after one blank line joins the value, the #2005 replay row.
 test("parseReportBlock folds a second dash list that one blank line sets apart", () => {
   expect(parseReportBlock(`${REPORT}\nNotes: keep this\n\n- item one\n\n- item two`)).toMatchObject(

@@ -243,18 +243,20 @@ test("later worker turns name Conclusion as the required first line of the block
   expect(prompt).toContain(
     "State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.",
   );
-  expect(prompt).toContain("A response with no `Conclusion:` line has no block.");
+  expect(prompt).not.toContain("A response with no `Conclusion:` line has no block.");
 });
 
 // Usefulness: verifies requirement "the worker preamble states that Conclusion and Why come first"
-// (issue #2069). A worker wrote Conclusion and Why after the other labels in bold, and the block
-// parsed to null. Both the first turn and a later one carry the order rule.
+// (issue #2069). Both the first turn and a later one carry the order rule, and neither claims a
+// response without a Conclusion line has no block. Main reads plain prose above the first label as
+// the conclusion, so that claim is false.
 test("worker turns state that Conclusion and Why come first", () => {
   for (const firstTurn of [true, false]) {
     const prompt = workerPrompt("do the task", firstTurn).replace(/\s+/g, " ");
     expect(prompt).toContain(
       "The block must open with the `Conclusion:` line, then the `Why:` line, before `Blockers:`, `Checks:`, `Notes:`, and `Deferred:`.",
     );
+    expect(prompt).not.toContain("A response with no `Conclusion:` line has no block.");
   }
 });
 

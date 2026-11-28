@@ -90,52 +90,6 @@ const ABSENT_BLOCKERS_REPAIRED = [
   "Deferred: none.",
 ].join("\n");
 
-// The issue #2069 shape 3: Conclusion and Why come after the other four labels, in bold, so the
-// block starts at the last Conclusion line and parses to null without Blockers.
-const CONCLUSION_LAST = [
-  "The run is verified.",
-  "",
-  "Blockers: none.",
-  "Checks: npm test",
-  "Notes: none",
-  "Deferred: none",
-  "",
-  "**Conclusion:** the tests pass.",
-  "",
-  "**Why:** npm test exited 0.",
-].join("\n");
-// The canonical restatement keeps every value and puts Conclusion and Why first.
-const CONCLUSION_LAST_REPAIRED = [
-  "Conclusion: the tests pass.",
-  "Why: npm test exited 0.",
-  "Blockers: none.",
-  "Checks: npm test",
-  "Notes: none",
-  "Deferred: none",
-].join("\n");
-// The same restatement with a changed check, which no reorder may accept.
-const CONCLUSION_LAST_CHANGED = [
-  "Conclusion: the tests pass.",
-  "Why: npm test exited 0.",
-  "Blockers: none.",
-  "Checks: npm test failed",
-  "Notes: none",
-  "Deferred: none",
-].join("\n");
-// An explicitly empty Checks line above the block is no evidence, so a repair may not fill it.
-const CONCLUSION_LAST_EMPTY_CHECKS = [
-  "The run is verified.",
-  "",
-  "Blockers: none.",
-  "Checks:",
-  "Notes: none",
-  "Deferred: none",
-  "",
-  "**Conclusion:** the tests pass.",
-  "",
-  "**Why:** npm test exited 0.",
-].join("\n");
-
 // A reviewer repair that moves the words `to run` from Deferred to Checks, so the failed check
 // reads `failed to run`. The original Why is an explicit empty line with indented prose under it.
 const REVIEWER_MOVED = [
@@ -650,70 +604,6 @@ test("an issue #2015 shape names the mismatched repair outcome", async () => {
   expect(result.response).toBe(ABSENT_BLOCKERS);
   expect(result.report).toBeNull();
   expect(result.reportMissingLabels).toEqual(["Blockers"]);
-  expect(result.reportRepairOutcome).toBe("mismatched");
-});
-
-// Usefulness: verifies requirement "a repair of the issue #2069 shape 3 returns the same values in
-// order, so it matches" (issue #2069). The four labels above the last Conclusion line are the
-// original's values, so reordering them into the canonical form is no content change.
-test("a repair accepts the issue #2069 shape 3 with reordered labels", async () => {
-  const agent = scripted([CONCLUSION_LAST, CONCLUSION_LAST_REPAIRED]);
-  const result = await runChild({
-    agents: { fake: agent },
-    role: { kind: "fake", sessionId: null },
-    roleName: "worker",
-    prompt: "go",
-    cwd: repo,
-  });
-
-  expect(agent.recorded).toHaveLength(2);
-  expect(result.status).toBe("ok");
-  expect(result.response).toBe(CONCLUSION_LAST_REPAIRED);
-  expect(result.report).toEqual({
-    conclusion: "the tests pass.",
-    why: "npm test exited 0.",
-    blockers: "none.",
-    checks: "npm test",
-    notes: "none",
-    deferred: "none",
-  });
-  expect(result.reportRepairOutcome).toBeUndefined();
-});
-
-// Usefulness: verifies requirement "keep every existing refusal of the match check for a real value
-// change" (issue #2069). A label above the block that the repair changes still refuses the repair.
-test("a repair of the issue #2069 shape 3 refuses a changed label value", async () => {
-  const agent = scripted([CONCLUSION_LAST, CONCLUSION_LAST_CHANGED]);
-  const result = await runChild({
-    agents: { fake: agent },
-    role: { kind: "fake", sessionId: null },
-    roleName: "worker",
-    prompt: "go",
-    cwd: repo,
-  });
-
-  expect(agent.recorded).toHaveLength(2);
-  expect(result.response).toBe(CONCLUSION_LAST);
-  expect(result.report).toBeNull();
-  expect(result.reportRepairOutcome).toBe("mismatched");
-});
-
-// Usefulness: verifies requirement "an explicitly empty label is not an absent label" for the issue
-// #2069 shape (issue #2015 review). A repair of the reordered labels may not fill an empty Checks
-// line that the response wrote above the block.
-test("a repair of the issue #2069 shape 3 cannot fill an empty Checks line", async () => {
-  const agent = scripted([CONCLUSION_LAST_EMPTY_CHECKS, CONCLUSION_LAST_REPAIRED]);
-  const result = await runChild({
-    agents: { fake: agent },
-    role: { kind: "fake", sessionId: null },
-    roleName: "worker",
-    prompt: "go",
-    cwd: repo,
-  });
-
-  expect(agent.recorded).toHaveLength(2);
-  expect(result.response).toBe(CONCLUSION_LAST_EMPTY_CHECKS);
-  expect(result.report).toBeNull();
   expect(result.reportRepairOutcome).toBe("mismatched");
 });
 

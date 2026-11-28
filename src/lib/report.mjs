@@ -304,6 +304,51 @@ export function hasClosingBlockAttempt(response) {
 }
 
 /**
+ * The block start after a run of report label lines above the last `Conclusion:` line, when the
+ * block from that line holds no `Blockers` label and no earlier `Conclusion` line stands above the
+ * run. A reordered block that writes the other four labels before a final `Conclusion` and `Why`
+ * then parses with the values the response already wrote (issue #2069). A block that holds
+ * `Blockers`, and a response with an earlier `Conclusion` line, keep their start, so no block that
+ * parses changes and an earlier block never supplies a value.
+ * @param {string[]} lines
+ * @param {number} start
+ * @param {boolean[]} fenced
+ * @returns {number}
+ */
+function reorderedBlockStart(lines, start, fenced) {
+  // A leading required label or Verdict line joined the block, so the last Conclusion line is not
+  // its first line. That shape keeps the start it has.
+  if (!CONCLUSION_START_LINE.test(lines[start])) {
+    return start;
+  }
+  const opensBlockers = (line) => line.toLowerCase().startsWith("blockers:");
+  if (lines.some((line, index) => index >= start && !fenced[index] && opensBlockers(line))) {
+    return start;
+  }
+  if (
+    lines.some((line, index) => index < start && !fenced[index] && CONCLUSION_START_LINE.test(line))
+  ) {
+    return start;
+  }
+  let first = start;
+  let runHoldsBlockers = false;
+  for (;;) {
+    let at = first - 1;
+    while (at >= 0 && lines[at].trim() === "") {
+      at--;
+    }
+    if (at < 0 || fenced[at] || !PLAIN_LABEL_LINE.test(lines[at])) {
+      break;
+    }
+    first = at;
+    if (opensBlockers(lines[at])) {
+      runHoldsBlockers = true;
+    }
+  }
+  return runHoldsBlockers ? first : start;
+}
+
+/**
  * The closing block runs from the last `Conclusion:` line to the end of the response, and is null
  * without that line. A lone required label line or a lone `Verdict:` line above it, with only blank
  * lines between, joins the block. That label must appear once in the
@@ -341,7 +386,9 @@ function closingBlock(
     }
   }
   if (start !== -1) {
-    return blockFrom(leadingRequiredLabelStart(lines, start, fenced));
+    const first = leadingRequiredLabelStart(lines, start, fenced);
+    // The guard modes keep the origin/main start, so a split refusal never changes.
+    return blockFrom(includeFencedStart ? first : reorderedBlockStart(lines, first, fenced));
   }
   if (!unlabeled) {
     return null;
@@ -735,44 +782,17 @@ function withoutListMarker(line) {
 }
 
 /**
- * The report label lines directly above the closing block, in response order, with only blank lines
- * between them and the block. A label that the response wrote above the block still holds its
- * inline value, so a repair may restate it in the canonical order without changing a word (issue
- * #2069). A non-label line ends the run, so narration and a list above the block supply no value.
+ * The normalized content of each report label in the closing block, from the last occurrence of
+ * the label to the next known label. Every line under the label contributes, so a `*` list or a
+ * wrapped line that the parser does not fold still counts as content. `named` holds every label that
+ * a line names, so a label line with no content stays apart from a label that the response omits.
+ * `holds` holds every label with a parsed value or a word in the content scan, so a dash value
+ * counts as held and a list the parser drops still counts by its words. `parsed` holds the value
+ * the parser returned for each label, so a label that it read as empty or absent stays null.
+ * `perLabel` is true only when the parser returns per-label values; a failed fold reads the raw
+ * block and keeps the inherited comparison.
  * @param {string} response
- * @param {string[]} block
- * @returns {string[]}
- */
-function labelLinesAboveBlock(response, block) {
-  const { lines } = normalizedReportLines(response);
-  const out = [];
-  let at = lines.length - block.length - 1;
-  while (at >= 0) {
-    if (lines[at].trim() === "") {
-      at--;
-      continue;
-    }
-    if (!isKnownLabelLine(lines[at])) {
-      break;
-    }
-    out.push(lines[at]);
-    at--;
-  }
-  return out.reverse();
-}
-
-/**
- * The normalized content of each report label in `response`, from the last occurrence of the label
- * to the next known label. Every line under the label contributes, so a `*` list or a wrapped line
- * that the parser does not fold still counts as content. A label line directly above the closing
- * block, with only blank lines between, also contributes its inline value. `named` holds every label
- * that a line names, so a label line with no content stays apart from a label that the response
- * omits. `holds` holds every label with a parsed value or a word in the content scan, so a dash
- * value counts as held and a list the parser drops still counts by its words. `perLabel` is true
- * only when the parser returns per-label values; a failed fold reads the raw block and keeps the
- * inherited comparison.
- * @param {string} response
- * @returns {{ sections: Map<string, string[]>, named: Set<string>, holds: Set<string>, perLabel: boolean } | null}
+ * @returns {{ sections: Map<string, string[]>, named: Set<string>, holds: Set<string>, parsed: Map<string, string | null>, perLabel: boolean } | null}
  */
 function originalLabelTokens(response) {
   const shared = foldedReportBlock(response, { diagnose: true });
@@ -782,42 +802,35 @@ function originalLabelTokens(response) {
   const { block, labels, lines } = shared;
   const sections = new Map();
   const named = new Set();
-  const scan = (blockLines) => {
-    let current = null;
-    for (const line of blockLines) {
-      const match = line.match(REPORT_LABEL_LINE);
-      if (match) {
-        current = LABEL_KEY_BY_NAME.get(match[1].toLowerCase()) ?? null;
-        if (current !== null) {
-          sections.set(current, reportContentTokens(match[2]));
-          named.add(current);
-        }
-        continue;
-      }
-      if (isKnownLabelLine(line)) {
-        current = null;
-        continue;
-      }
+  let current = null;
+  for (const line of block) {
+    const match = line.match(REPORT_LABEL_LINE);
+    if (match) {
+      current = LABEL_KEY_BY_NAME.get(match[1].toLowerCase()) ?? null;
       if (current !== null) {
-        sections.get(current).push(...reportContentTokens(withoutListMarker(line)));
+        sections.set(current, reportContentTokens(match[2]));
+        named.add(current);
       }
+      continue;
     }
-  };
-  // The block holds the last occurrence of each label, so it overwrites any value above it.
-  if (lines !== null) {
-    scan(labelLinesAboveBlock(response, block));
+    if (isKnownLabelLine(line)) {
+      current = null;
+      continue;
+    }
+    if (current !== null) {
+      sections.get(current).push(...reportContentTokens(withoutListMarker(line)));
+    }
   }
-  scan(block);
   // The parsed label value decides a wordless value: a dash, inline or folded from a list, is a
   // value the original holds. The content scan still marks a label whose words the parser drops,
   // such as a star-list finding, so the inherited comparison stays unchanged for that shape.
-  const parsedValue = new Map(labels.map(({ key, value }) => [key, value]));
+  const parsed = new Map(labels.map(({ key, value }) => [key, value]));
   const holds = new Set(
     REPORT_LABELS.map(([key]) => key).filter(
-      (key) => parsedValue.get(key) !== null || (sections.get(key)?.length ?? 0) > 0,
+      (key) => parsed.get(key) !== null || (sections.get(key)?.length ?? 0) > 0,
     ),
   );
-  return { sections, named, holds, perLabel: lines !== null };
+  return { sections, named, holds, parsed, perLabel: lines !== null };
 }
 
 /** True when both lists hold the same words in the same order. */
@@ -835,12 +848,13 @@ function sameTokens(left, right) {
  * form it used, and a reviewer verdict must match an explicit original verdict. A label line that
  * the original wrote with no value is empty, not absent, so the repair must leave it empty. A label
  * that the original omits may gain only a `none` finding, whose sole word is `none` in any case. A
- * dash value is a value the original holds, so it keeps the same comparison as any other held
- * value. The empty-label rule applies only when the parser returns per-label values for the
- * original block. When the fold fails and the parser reads the raw block, the inherited comparison
- * alone applies, with no added-value check. A word that the repair adds, drops, or moves between
- * labels leaves the repair unused, so a repair can never create an acceptance that the original
- * response did not state (issue #2015).
+ * label that the parser returned a value for must stay present in the repair, a wordless dash
+ * included, so a repair cannot drop a label the original held. The empty-label rule and the
+ * presence rule apply only when the parser returns per-label values for the original block. When
+ * the fold fails and the parser reads the raw block, the inherited comparison alone applies, with
+ * no added-value check. A word that the repair adds, drops, or moves between labels leaves the
+ * repair unused, so a repair can never create an acceptance that the original response did not
+ * state (issues #2015 and #2069).
  * @param {string} response the original child response
  * @param {string} repairedResponse the repair turn response
  * @param {ReturnType<typeof parseReportBlock>} report the parsed repaired report
@@ -860,10 +874,15 @@ export function repairedReportMatches(
   if (original === null) {
     return false;
   }
-  const { sections: originals, named, holds, perLabel } = original;
+  const { sections: originals, named, holds, parsed, perLabel } = original;
   for (const [key] of REPORT_LABELS) {
     const originalTokens = originals.get(key) ?? [];
     const repaired = reportContentTokens(report[key] ?? "");
+    if (perLabel && parsed.get(key) !== null && report[key] === null) {
+      // The parser read a value for this label, so the repair must state it. A wordless dash is a
+      // value, so a repair that drops it loses content (issue #2069 review).
+      return false;
+    }
     if (perLabel && !holds.has(key)) {
       // The parser returned per-label values, and the original left this label empty or omitted, so
       // any value is an addition, a lone dash included. An empty line stays empty; a label that no
@@ -1181,6 +1200,34 @@ function proseSectionOwner(out, from) {
 }
 
 /**
+ * The prose paragraph that starts at `lines[start]`: its consecutive non-blank prose lines, joined
+ * with a space, and the last line used. A line that a dash list directly follows is a lead section,
+ * not part of this paragraph.
+ * @param {string[]} lines
+ * @param {number} start
+ * @returns {{ text: string, end: number }}
+ */
+function proseParagraph(lines, start) {
+  const parts = [proseText(lines[start])];
+  let end = start;
+  while (end + 1 < lines.length) {
+    const next = lines[end + 1];
+    if (next.trim() === "" || (!isPlainProseLine(next) && !isBoldProseLine(next))) {
+      break;
+    }
+    if (
+      isFoldableItem(lines[end + 2] ?? "", HEADING_ITEM) ||
+      (lines[end + 2]?.trim() === "" && isFoldableItem(lines[end + 3] ?? "", HEADING_ITEM))
+    ) {
+      break;
+    }
+    parts.push(proseText(next));
+    end++;
+  }
+  return { text: parts.join(" "), end };
+}
+
+/**
  * The prose sections in `out` from `from`, in order. A section is a group of consecutive non-blank
  * entries, and its lines join with a space.
  * @param {string[]} out
@@ -1228,8 +1275,10 @@ function foldEmptyLabelLists(lines) {
   const folded = [];
   // Labels that took a section fold, labels past the general rule, and labels that broke it.
   // `sectioned` gains a label from the `extra` dash loop, the bare-dash branch, or
-  // `foldedAfterBlank`.
+  // `foldedAfterBlank`. `proseRun` holds the labels that took the issue #2069 run fold, so only
+  // that run folds a following prose section with no list.
   const sectioned = new Set();
+  const proseRun = new Set();
   const nonCanonical = new Set();
   const invalid = new Set();
   // The outside-block text of each label: the folded value with each item's own lead left out,
@@ -1335,6 +1384,7 @@ function foldEmptyLabelLists(lines) {
             [...prose, `${lead}${items.join("; ")}`].join("; "),
           );
           sectioned.add(owner);
+          proseRun.add(owner);
           out.length = owner + 1;
         }
         if (foldedAfterBlank) {
@@ -1348,16 +1398,18 @@ function foldEmptyLabelLists(lines) {
         items.length === 0 &&
         at >= 0 &&
         owner === at &&
-        sectioned.has(at) &&
+        proseRun.has(at) &&
         oneBlankBefore &&
         !nonCanonical.has(at)
       ) {
-        // A prose section with no list after a section fold joins the value in order (issue #2069).
-        const prose = proseText(line);
+        // A prose section with no list that follows the lead in the same run joins the value, its
+        // paragraph lines joined with a space (issue #2069).
+        const section = proseParagraph(lines, i);
         folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
-        addMasked(out[at], prose);
-        out[at] = appendToLabel(out[at], prose);
+        addMasked(out[at], section.text);
+        out[at] = appendToLabel(out[at], section.text);
         trimTrailingBlanks(out);
+        i = section.end;
         continue;
       }
     } else if (
