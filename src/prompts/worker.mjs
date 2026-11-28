@@ -102,10 +102,11 @@ const reasonsUnderWhyRule =
 const conclusionFirstRule =
   "The block must open with the `Conclusion:` line. A response with no `Conclusion:` line has no block. The parent then reads the response as raw text. State a requested value, such as a head SHA or a PR number, inside a label line of the block, never on a line of its own.";
 
-// A later turn resumes the same session and gets no preamble, so it never learns that `TMPDIR`
-// changed. A reused temporary path can name a directory that the runtime already removed.
+// A later turn resumes the same session and gets no preamble, so it never learns which temporary
+// directory is current. Creation can fail and leave the inherited directory, so the directory can
+// change between turns, and a reused temporary path can name one that is already gone.
 const laterTurnTmpdirRule =
-  "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.";
+  "The temporary directory that `TMPDIR`, `TEMP`, or `TMP` names can change between turns, so read it again on each turn, and never reuse a temporary path from an earlier turn.";
 
 // A resumed session can hold a conversation that started before the turn-directory clause, so every
 // later turn repeats the complete rule next to the temporary-path rule.
