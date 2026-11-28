@@ -777,8 +777,9 @@ test("reviewer prompt without a scratch folder names none", () => {
 
 // Usefulness: verifies acceptance #1024 — the reviewer is told to reach the system temporary
 // directory only through TMPDIR, TEMP, or TMP, because a Codex turn gets a private directory there
-// that the runtime removes when its creation succeeds, and a literal path to the inherited
-// directory escapes that removal.
+// that the runtime removes when its creation succeeds. A turn whose directory creation fails runs
+// in the inherited temporary directory, and a literal path to the inherited directory escapes that
+// removal.
 test("reviewer prompt bars a literal path to the system temporary directory", () => {
   const prompt = reviewerPrompt({ prompt: "check the fix" });
   expect(prompt).toContain(

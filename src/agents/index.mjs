@@ -33,11 +33,12 @@ export { normalizeAgent };
  * the other adapters through `privateTmpdir`.
  *
  * An adapter with `privateTmpdir` set runs inside `runAgent` with a private temporary directory
- * when the runtime creates one; a failed creation runs the turn in the inherited directory
- * (ADR 0068). It reads the child environment from `options.env`, which names the created directory
- * in `TMPDIR`, `TEMP`, and `TMP`, and passes it to `exec`. It also passes `options.onTurnChild` to
- * `exec` as `onSpawn`. The
- * Codex adapter has no flag, because it creates its own directory (ADR 0047).
+ * when the runtime creates one; a turn whose directory creation fails runs in the inherited
+ * directory (ADR 0068). It reads the child environment from `options.env`, which sets `TMPDIR`,
+ * `TEMP`, and `TMP` to the private directory when creation succeeds, and is undefined when
+ * creation fails, so the child inherits the parent temporary directory. It also passes
+ * `options.onTurnChild` to `exec` as `onSpawn`. The Codex adapter has no flag, because it creates
+ * its own directory (ADR 0047).
  */
 export const defaultAgents = {
   claude: { run: runClaude, privateTmpdir: true },
