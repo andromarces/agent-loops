@@ -22,7 +22,7 @@ The modes, their Codex settings, the app-connector setting, and the ADRs are in
   in [Codex read-only network limit](../reference/reviewer-safety.md#codex-read-only-network-limit).
 - A cache that a tool writes to its own default location, such as a test runner cache under an ignored path or a compile cache in a temporary directory, is not reviewer output. Output under a path that the reviewer chose for the turn, such as a directory that it set `TMPDIR`, `TEMP`, or `TMP` to, or the runtime scratch folder, stays turn output even when a tool writes it there.
   - For a reviewer `Notes` line: A refused cleanup of a tool cache in its default location is not a finding. The cache and output rules are in [Completion](../orchestrator-instructions.md#completion). A refused cleanup of that output or of a probe file that the turn created still goes into `open`. The rule is advisory, and the runtime does not detect a breach.
-- Each turn runs with a private temporary directory under the inherited one, set through `TMPDIR`, `TEMP`, and `TMP`.
+- Each turn runs with a private temporary directory under the inherited one, set through `TMPDIR`, `TEMP`, and `TMP`. A turn whose directory creation fails runs in the inherited directory instead.
   - Build a temporary path from the directory that TMPDIR, TEMP, or TMP names when one is set. Never write a literal path to the system temporary directory, such as `/tmp`. The removal covers only the private directory.
 - Choose the mode at init, and never change it later. The state file holds
   `reviewerSandbox` (`none`, `read-only`, or `workspace-write`) for a Codex reviewer

@@ -71,7 +71,8 @@ const workTreeEditRule =
 const foreignCheckoutEditRule =
   "If an edit lands in another checkout, report the paths in the closing block and stop. Never restore or discard a file there. A restore can discard an uncommitted change of the user.";
 
-// Every turn runs with a private temporary directory that the runtime removes (ADR 0047, ADR 0068).
+// Every turn runs with a private temporary directory that the runtime removes, unless its creation
+// fails and the turn uses the inherited directory (ADR 0047, ADR 0068).
 // A literal `/tmp` path in Git Bash resolves to the inherited directory, which that removal does not
 // cover, so a scratch file there outlives the turn and shows up as a reviewer
 // `inheritedTmpdirEntries` entry. The reviewer prompt carries the same rule.
