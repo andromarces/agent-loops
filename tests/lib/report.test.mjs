@@ -1776,24 +1776,24 @@ test("parseReportBlock returns null for the issue #2069 reordered block", () => 
   expect(parseReportBlock(response)).toBeNull();
 });
 
-// Usefulness: verifies two leading plain labels above a final Conclusion keep main's null, so a
-// stale draft cannot supply the final block.
+// Usefulness: verifies two leading plain labels above a final Conclusion keep main's null, as in
+// main.
 test("parseReportBlock returns null for two leading labels above the final Conclusion", () => {
   expect(
     parseReportBlock("Blockers: none\nChecks: npm test\n\nConclusion: done\nWhy: ok"),
   ).toBeNull();
 });
 
-// Usefulness: verifies a stale Blockers and Checks from an earlier draft above an explicit
-// Conclusion keep main's null, so they never reach the final block.
+// Usefulness: verifies a stale Blockers and Checks above an explicit Conclusion keep main's null
+// for this two-label draft.
 test("parseReportBlock returns null for a stale draft above an explicit Conclusion", () => {
   expect(
     parseReportBlock("Blockers: stale\nChecks: stale checks\n\nConclusion: done\nWhy: ok"),
   ).toBeNull();
 });
 
-// Usefulness: verifies a stale Blockers and Checks from an earlier draft above an inferred prose
-// conclusion keep main's null, so they never supply a final block.
+// Usefulness: verifies a stale Blockers and Checks above an inferred prose conclusion keep main's
+// null.
 test("parseReportBlock returns null for a stale draft above an inferred conclusion", () => {
   expect(
     parseReportBlock(
@@ -1833,6 +1833,35 @@ test("parseReportBlock folds a two-line trailing paragraph in the issue #2069 ru
     checks: null,
     notes: null,
     deferred: null,
+  });
+});
+
+// Usefulness: verifies a Markdown horizontal rule never starts the issue #2069 run, so the head
+// keeps main's null when a later evidence list follows it. A thematic break is no prose paragraph.
+test("parseReportBlock returns null for a horizontal rule before a prose lead and list", () => {
+  for (const rule of ["---", "- - -", "***", "___"]) {
+    expect(
+      parseReportBlock(`${REPORT}\nNotes: keep\n\n${rule}\n\nEvidence:\n- a`),
+      rule,
+    ).toBeNull();
+  }
+});
+
+// Usefulness: verifies a bold lead after a plain paragraph does not start the issue #2069 run, as
+// in main, so the dash list under it stays unparseable.
+test("parseReportBlock returns null for a bold lead after a plain paragraph", () => {
+  expect(
+    parseReportBlock(`${REPORT}\nNotes: keep\n\nA paragraph.\n\n**Evidence**\n- a`),
+  ).toBeNull();
+});
+
+// Usefulness: records main's behavior for an earlier draft's lone Blockers line: it joins the block
+// when only blank lines separate it from the final Conclusion, so this change makes no guarantee
+// about an earlier draft.
+test("parseReportBlock reads a lone Blockers line above the final Conclusion", () => {
+  expect(parseReportBlock("Blockers: stale\n\nConclusion: final\nWhy: ok")).toMatchObject({
+    blockers: "stale",
+    conclusion: "final",
   });
 });
 

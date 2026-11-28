@@ -1094,6 +1094,17 @@ function isPlainProseLine(line) {
   return /^[^\s*_`>#]/.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
 }
 
+/**
+ * True when the line is a real prose paragraph line: a plain prose line that is no Markdown
+ * thematic break. A `---`, `***`, `___`, or `- - -` rule is no paragraph, so it never starts or
+ * continues the issue #2069 run.
+ * @param {string} line
+ * @returns {boolean}
+ */
+function isProseParagraphLine(line) {
+  return isPlainProseLine(line) && !THEMATIC_BREAK.test(line);
+}
+
 const BOLD_PROSE_LINE = /^\*\*[^*]+\*\*$/;
 
 /**
@@ -1114,8 +1125,9 @@ function trimTrailingBlanks(out) {
 /**
  * The index of the label line that owns the prose run ending at `out[from]`, or -1 when the entries
  * above it are no run of prose sections. A section is one line or a paragraph of consecutive plain
- * prose lines, separated from its neighbour by exactly one blank line. A bold line, a list, a table
- * row, a label line with no blank above it, and two blank lines all supply no owner.
+ * prose lines, separated from its neighbour by exactly one blank line. A bold line, a thematic
+ * break, a list, a table row, a label line with no blank above it, and two blank lines all supply
+ * no owner.
  * @param {string[]} out
  * @param {number} from
  * @returns {number}
@@ -1123,12 +1135,12 @@ function trimTrailingBlanks(out) {
 function proseSectionOwner(out, from) {
   let at = from;
   while (at >= 0) {
-    if (!isPlainProseLine(out[at])) {
+    if (!isProseParagraphLine(out[at])) {
       return -1;
     }
     // Move up to the first line of this paragraph.
     while (at > 0 && out[at - 1].trim() !== "" && !PLAIN_LABEL_LINE.test(out[at - 1])) {
-      if (!isPlainProseLine(out[at - 1])) {
+      if (!isProseParagraphLine(out[at - 1])) {
         return -1;
       }
       at--;
@@ -1145,9 +1157,9 @@ function proseSectionOwner(out, from) {
 }
 
 /**
- * The prose paragraph that starts at `lines[start]`: its consecutive non-blank plain prose lines,
- * joined with a space, and the last line used. A line that a dash list directly follows is a lead
- * section, not part of this paragraph.
+ * The prose paragraph that starts at `lines[start]`: its consecutive non-blank plain prose lines
+ * that are no thematic break, joined with a space, and the last line used. A line that a dash list
+ * directly follows is a lead section, not part of this paragraph.
  * @param {string[]} lines
  * @param {number} start
  * @returns {{ text: string, end: number }}
@@ -1157,7 +1169,7 @@ function proseParagraph(lines, start) {
   let end = start;
   while (end + 1 < lines.length) {
     const next = lines[end + 1];
-    if (next.trim() === "" || !isPlainProseLine(next)) {
+    if (next.trim() === "" || !isProseParagraphLine(next)) {
       break;
     }
     if (
@@ -1202,10 +1214,10 @@ function proseSections(out, from) {
  * Folds each section under a report label line into that label's value. A section is a bare dash
  * run, or a prose lead with its `- ` run, and exactly one blank line comes before each. A prose lead
  * follows the prose-lead rules, the whole-line bold heading included. A run that starts with a
- * plain prose paragraph with no list and holds a prose lead with its dash list folds in order: the
- * paragraph and any later prose section with no list join as `; <prose>`, and each paragraph's lines
- * join with a space. Markers drop, and sections join each other and an existing value with a
- * semicolon and a space.
+ * plain prose paragraph with no list and holds a plain prose lead with its dash list folds in order:
+ * the paragraph and any later plain prose section with no list join as `; <prose>`, and each
+ * paragraph's lines join with a space. A thematic break and a bold lead start no such run. Markers
+ * drop, and sections join each other and an existing value with a semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.
@@ -1310,7 +1322,7 @@ function foldEmptyLabelLists(lines) {
       if (
         items.length > 0 &&
         owner >= 0 &&
-        (owner === at || (oneBlankBefore && isPlainProseLine(line)))
+        (owner === at || (oneBlankBefore && isProseParagraphLine(line)))
       ) {
         const lead = `${proseText(line).replace(/:$/, "")}: `;
         // Adds the label to `invalid` when it is `sectioned` and `oneBlankBefore` is false.
@@ -1350,7 +1362,7 @@ function foldEmptyLabelLists(lines) {
         owner === at &&
         proseRun.has(at) &&
         oneBlankBefore &&
-        isPlainProseLine(line) &&
+        isProseParagraphLine(line) &&
         !nonCanonical.has(at)
       ) {
         // A prose section with no list that follows the lead in the same run joins the value, its
