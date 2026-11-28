@@ -109,8 +109,10 @@ The read step is verified on Windows 11, and a capped read with an offset is not
 - The Copilot CLI entry point is the packaged `src/entrypoints/copilot.mjs`,
   exposed as `agent-loop-copilot`. It mints a UUID, starts
   `copilot --session-id <uuid> --add-dir <docs dir> --interactive <prompt>`, and
-  includes the instruction file, task, and same id for `--parent-session` in the
-  first prompt. The current CLI documentation exposes no custom command-template
+  includes the instruction file, task, and same id in the first prompt, which
+  passes it as `--parent-session` on the `role` init dispatch call; a batch
+  request runs one `batch start` command, which takes no `--parent-session`.
+  The current CLI documentation exposes no custom command-template
   session-id placeholder, so the launcher is the native entry point.
 - The Antigravity CLI entry point is a skill at
   `~/.gemini/antigravity-cli/skills/agent-loop/SKILL.md`, activated as
