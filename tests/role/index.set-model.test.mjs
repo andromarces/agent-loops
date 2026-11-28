@@ -61,6 +61,9 @@ const setModel = (repo, ...flags) =>
     agents: { fake1: recordingAdapter([]), fake2: recordingAdapter([]) },
   });
 
+const setModelOn = (repo, agents, ...flags) =>
+  executeRoleCommand(withRepo(setModelArgv(...flags), repo), { agents });
+
 /** An adapter that records the model of each turn and fails the turns while `refuse` returns true. */
 function modelAdapter(refuse = () => false) {
   const adapter = recordingAdapter([]);
@@ -508,4 +511,152 @@ test("set-model succeeds on the current model on the provider-safety path withou
   expect(await readRepoState(repo)).toEqual(before);
   expect((await stat(stateFile)).mtimeMs).toBe(mtimeBefore);
   expect(before.roles.reviewer.sessionId).toBe("sess-1");
+});
+
+// Usefulness: verifies a CLI switch on a run that is not active is refused, so no change reaches a
+// run whose turn can still run on the old CLI.
+test("set-model refuses a CLI switch on a run that is not active", async () => {
+  for (const lifecycle of ["dispatched", "interrupted"]) {
+    const { repo } = await startRun({ initFlags: ["--reviewer-model", "gpt-6.1"] });
+    const state = await readRepoState(repo);
+    state.lifecycle = lifecycle;
+    await writeState(statePaths({ cwd: repo }).stateFile, state);
+
+    const refused = await setModel(repo, "--reviewer", "fake1", "--reviewer-model", "gpt-6.1-sol");
+    expect(refused.exitCode, lifecycle).toBe(1);
+    expect(refused.payload.error, lifecycle).toContain(lifecycle);
+    expect((await readRepoState(repo)).roles.reviewer.kind, lifecycle).toBe("fake2");
+  }
+
+  const { repo } = await startRun({ initFlags: ["--reviewer-model", "gpt-6.1"] });
+  await executeRoleCommand(withRepo(["abort", "--cwd", "<repo>", "--reason", "stop"], repo));
+  const ended = await setModel(repo, "--reviewer", "fake1", "--reviewer-model", "gpt-6.1-sol");
+  expect(ended.payload.error).toBe("Run is already aborted.");
+});
+
+// Usefulness: verifies a CLI switch needs a latest reviewer turn that is a provider-safety refusal,
+// with or without a turn, so the exception cannot move an ordinary conversation to another CLI.
+test("set-model refuses a CLI switch without a latest provider-safety refusal", async () => {
+  for (const withOkTurn of [false, true]) {
+    const { repo, agents } = await startRun({ initFlags: ["--reviewer-model", "gpt-6.1"] });
+    if (withOkTurn) {
+      expect((await reviewerTurn(repo, agents)).exitCode).toBe(0);
+    }
+    const before = await readRepoState(repo);
+
+    const refused = await setModel(repo, "--reviewer", "fake1", "--reviewer-model", "gpt-6.1-sol");
+    expect(refused.exitCode, String(withOkTurn)).toBe(1);
+    if (!withOkTurn) {
+      expect(refused.payload.error).toContain("provider-safety");
+    }
+    expect(await readRepoState(repo), String(withOkTurn)).toEqual(before);
+  }
+});
+
+// Usefulness: verifies an unknown or unsupported reviewer CLI is refused, so a CLI switch cannot
+// leave the run with a kind that no adapter can run.
+test("set-model refuses an unknown or unsupported reviewer CLI", async () => {
+  const { repo } = await startSafetyRefusedReviewerRun();
+  const before = await readRepoState(repo);
+
+  for (const kind of ["nope", "fake9"]) {
+    const refused = await setModel(repo, "--reviewer", kind, "--reviewer-model", "gpt-6.1-sol");
+    expect(refused.exitCode, kind).toBe(1);
+    expect(refused.payload.error, kind).toContain("Unsupported reviewer CLI");
+    expect(await readRepoState(repo), kind).toEqual(before);
+  }
+});
+
+// Usefulness: verifies a CLI switch validates the model and effort against the new CLI, so an
+// invalid pair is refused before any state changes.
+test("set-model refuses a CLI change with an invalid model or effort for the new CLI", async () => {
+  const { repo } = await startSafetyRefusedReviewerRun();
+  const before = await readRepoState(repo);
+
+  const refused = await setModel(
+    repo,
+    "--reviewer",
+    "opencode",
+    "--reviewer-model",
+    "p/m#low",
+    "--reviewer-effort",
+    "high",
+  );
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("already contains a variant");
+  expect(await readRepoState(repo)).toEqual(before);
+});
+
+// Usefulness: verifies a CLI switch after a provider-safety refusal starts the new CLI in a new
+// session with the init task, and keeps the worker session, the step count, and the turn history.
+test("set-model switches the reviewer CLI and the next dispatch starts a new session with the init task", async () => {
+  const newCliCalls = [];
+  const newReviewer = {
+    async run(state, prompt) {
+      newCliCalls.push({ kind: state.kind, incomingSessionId: state.sessionId, prompt });
+      state.sessionId = "sess-new-cli";
+      return REPORT + "\nVerdict: accept";
+    },
+  };
+  let oldCalls = 0;
+  const oldReviewer = recordingAdapter([]);
+  oldReviewer.run = async (state) => {
+    oldCalls += 1;
+    if (state.sessionId === null) state.sessionId = "sess-old-cli";
+    if (oldCalls === 1) throw providerSafetyRefusal();
+    return REPORT + "\nVerdict: accept";
+  };
+  const agents = {
+    fake1: recordingAdapter([]),
+    fake2: oldReviewer,
+    fake3: newReviewer,
+  };
+  const { repo } = await startRun({ initFlags: ["--reviewer-model", "gpt-6.1"], agents });
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(1);
+  const before = await readRepoState(repo);
+  expect(before.roles.reviewer).toMatchObject({ kind: "fake2", sessionId: "sess-old-cli" });
+
+  const changed = await setModelOn(
+    repo,
+    agents,
+    "--reviewer",
+    "fake3",
+    "--reviewer-model",
+    "gpt-6.1-sol",
+    "--reviewer-effort",
+    "high",
+  );
+  expect(changed.exitCode).toBe(0);
+  expect(changed.payload).toEqual({
+    status: "ok",
+    lifecycle: "active",
+    role: "reviewer",
+    model: "gpt-6.1-sol",
+    previousModel: "gpt-6.1",
+    kind: "fake3",
+    previousKind: "fake2",
+  });
+
+  const after = await readRepoState(repo);
+  expect(after.roles.reviewer).toMatchObject({
+    kind: "fake3",
+    model: "gpt-6.1-sol",
+    effort: "high",
+    sessionId: null,
+  });
+  expect(after.cliChanges).toEqual([
+    { role: "reviewer", from: "fake2", to: "fake3", at: expect.any(String) },
+  ]);
+  expect(after.modelChanges).toEqual([
+    { role: "reviewer", from: "gpt-6.1", to: "gpt-6.1-sol", at: expect.any(String) },
+  ]);
+  expect(after.roles.worker).toEqual(before.roles.worker);
+  expect(after.stepsUsed).toBe(before.stepsUsed);
+  expect(after.turns).toEqual(before.turns);
+
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(0);
+  expect(newCliCalls).toHaveLength(1);
+  expect(newCliCalls[0]).toMatchObject({ kind: "fake3", incomingSessionId: null });
+  expect(newCliCalls[0].prompt).toContain("Init task:\nFix the flaky test.");
+  expect(oldCalls).toBe(1);
 });

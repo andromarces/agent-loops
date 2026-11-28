@@ -174,15 +174,18 @@ Role operations:
                                 a missing or linked side, and a copy that a turn
                                 changed. Refuses a terminal run and a child role.
   set-model                     Replace the model of one role that has completed no
-                                ok turn, or of the reviewer whose latest turn is a
-                                provider-safety refusal (with or without an earlier ok
-                                turn), on an active run, with
-                                --worker-model or --reviewer-model (exactly one), so a
-                                model that the CLI refused is repaired without a new
-                                run. A first Codex turn that a recognized model refusal
-                                ends charges no step. A successful model change on that
-                                path starts a new session with the init task. Needs
-                                the stored --parent-session id. Refuses a role with an
+                                ok turn, or the model or CLI of the reviewer whose
+                                latest turn is a provider-safety refusal (with or
+                                without an earlier ok turn), on an active run, with
+                                --worker-model or --reviewer-model (exactly one).
+                                --reviewer <cli> with --reviewer-model changes the
+                                reviewer CLI, and --reviewer-effort sets its effort;
+                                an omitted effort clears it. The new CLI must be
+                                supported, and its model and effort valid. A first
+                                Codex turn that a recognized model refusal ends
+                                charges no step. A successful change on that path
+                                starts a new session with the init task. Needs the
+                                stored --parent-session id. Refuses a role with an
                                 ok turn otherwise.
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
