@@ -112,8 +112,8 @@ The read step is verified on Windows 11, and a capped read with an offset is not
   includes the instruction file, task, and same id in the first prompt, which
   passes it as `--parent-session` on the `role` init dispatch call; a batch
   request runs one `batch start` command, which takes no `--parent-session`.
-  The current CLI documentation exposes no custom command-template session-id
-  placeholder, so the launcher is the native entry point.
+  The current CLI documentation exposes no custom command-template
+  session-id placeholder, so the launcher is the native entry point.
 - The Antigravity CLI entry point is a skill at
   `~/.gemini/antigravity-cli/skills/agent-loop/SKILL.md`, activated as
   `/agent-loop` in an interactive session. It runs the installed CLI by absolute
