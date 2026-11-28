@@ -438,19 +438,22 @@ test("an error turn reports the charged step budget from the state file", async 
 });
 
 // Usefulness: verifies acceptance #2066 — when the final state write fails after the charge was
-// saved, the error envelope reports the saved post-charge budget instead of omitting it.
-test("a final state write failure reports the saved post-charge budget", async () => {
+// saved, the error envelope reports the saved budget, not the refunded in-memory value that the
+// failed write never persisted.
+test("a final state write failure reports the last saved budget", async () => {
   const repo = await newCleanRunRepo(gitDouble);
   const paths = statePaths({ cwd: repo });
   let saved;
   const worker = {
     async run() {
-      // The charge write is on disk. Replace the state file with a directory so the final write
-      // fails after that save.
+      // The charge write is on disk. Replace the state file with a directory so the refunded
+      // final write fails after that save.
       saved = JSON.parse(await readFile(paths.stateFile, "utf8"));
       await rm(paths.stateFile);
       await mkdir(paths.stateFile);
-      return REPORT;
+      throw Object.assign(new Error("The 'gpt-6.1' model is not supported"), {
+        refusedModel: "gpt-6.1",
+      });
     },
   };
 
@@ -462,7 +465,7 @@ test("a final state write failure reports the saved post-charge budget", async (
   expect(result.exitCode).toBe(1);
   expect(result.payload).toMatchObject({
     status: "error",
-    stepsUsed: 1,
+    stepsUsed: saved.stepsUsed,
     maxSteps: saved.maxSteps,
   });
 });

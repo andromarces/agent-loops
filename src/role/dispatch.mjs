@@ -165,22 +165,14 @@ function createEventSink(transcriptFile) {
  */
 export async function dispatch(
   args,
-  {
-    agents,
-    stdin = readStdin,
-    signal,
-    gh,
-    readProcessCommands,
-    onMainWatch,
-    mainWatchDeadlineMs,
-    // Filled with the budget of the state that was last saved under the lock. The role entry point
-    // reports it in the forced-exit envelope and in an error that ends dispatch late.
-    savedBudget = {},
-  },
+  { agents, stdin = readStdin, signal, gh, readProcessCommands, onMainWatch, mainWatchDeadlineMs },
 ) {
   if (!args.role) {
     throw new RoleError("dispatch requires --role worker or reviewer.");
   }
+  // The budget of the state that was last saved under the lock, reported by an error that ends
+  // dispatch after that save. A forced exit omits the fields, because a save can be in flight.
+  const savedBudget = {};
   rejectMisplacedFlags(args, "dispatch");
 
   // The task file becomes `--task`, so init detection and the init checks see one source.
