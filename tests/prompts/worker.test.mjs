@@ -261,15 +261,16 @@ test("first worker turn reconciles quoted text with the inside-the-block rule", 
   expect(prompt).not.toContain("Never refer to text outside the block");
 });
 
-// Usefulness: acceptance #1610: a later worker turn resumes the same session and gets no preamble,
-// so it does not learn that TMPDIR changed. A worker that reused a temporary path from an earlier
-// turn wrote to a directory that no longer existed. The later turn states that TMPDIR names a new
-// private directory on every turn and that no earlier path is reused.
-test("later worker turns state that TMPDIR changes every turn", () => {
+// Usefulness: acceptance #1610 and #2059: a later worker turn resumes the same session and gets
+// no preamble, so it does not learn which temporary directory is current. Creation can fail and
+// leave the inherited directory in place, so the later turn states only that the directory can
+// change between turns, that the worker reads it again, and that no earlier path is reused.
+test("later worker turns state that the temporary directory can change between turns", () => {
   const prompt = workerPrompt("fix the reviewer finding", false).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.",
+    "The temporary directory that `TMPDIR`, `TEMP`, or `TMP` names can change between turns, so read it again on each turn, and never reuse a temporary path from an earlier turn.",
   );
+  expect(prompt).not.toContain("new private directory");
 });
 
 // Usefulness: verifies acceptance #2055 for a resumed worker turn, which gets no preamble and can
