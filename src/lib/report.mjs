@@ -1094,6 +1094,25 @@ function isPlainProseLine(line) {
   return /^[^\s*_`>#]/.test(line) && !isListLine(line) && !HEADING_LABEL_MENTION.test(line);
 }
 
+/**
+ * True when the line can start or continue the issue #2069 run: its first character is a Unicode
+ * letter or digit, it holds at least one letter, it is a plain prose line, it is no list item, and
+ * it ends with no pipe. The start rule excludes `<`, `[`, `|`, `>`, `#`, `=`, `-`, `*`, `_`, a
+ * backtick, and a fence by construction. `isPlainProseLine` keeps main's leading-backtick rule and
+ * rejects a leading space, `*`, `_`, a backtick, `>`, `#`, a list marker, and a label mention.
+ * @param {string} line
+ * @returns {boolean}
+ */
+function isProseParagraphLine(line) {
+  return (
+    /^[\p{L}\p{N}]/u.test(line) &&
+    /\p{L}/u.test(line) &&
+    isPlainProseLine(line) &&
+    !isListLine(line) &&
+    !line.trimEnd().endsWith("|")
+  );
+}
+
 const BOLD_PROSE_LINE = /^\*\*[^*]+\*\*$/;
 
 /**
@@ -1112,10 +1131,101 @@ function trimTrailingBlanks(out) {
 }
 
 /**
+ * The index of the label line that owns the prose run ending at `out[from]`, or -1 when the entries
+ * above it are no run of prose sections. A section is one line or a paragraph of consecutive lines
+ * that `isProseParagraphLine` accepts, separated from its neighbour by exactly one blank line. Any
+ * other line, a label line with no blank above it, and two blank lines all supply no owner.
+ * @param {string[]} out
+ * @param {number} from
+ * @returns {number}
+ */
+function proseSectionOwner(out, from) {
+  let at = from;
+  while (at >= 0) {
+    if (!isProseParagraphLine(out[at])) {
+      return -1;
+    }
+    // Move up to the first line of this paragraph.
+    while (at > 0 && out[at - 1].trim() !== "" && !PLAIN_LABEL_LINE.test(out[at - 1])) {
+      if (!isProseParagraphLine(out[at - 1])) {
+        return -1;
+      }
+      at--;
+    }
+    if (at < 2 || out[at - 1].trim() !== "" || out[at - 2].trim() === "") {
+      return -1;
+    }
+    if (PLAIN_LABEL_LINE.test(out[at - 2])) {
+      return at - 2;
+    }
+    at -= 2;
+  }
+  return -1;
+}
+
+/**
+ * The prose paragraph that starts at `lines[start]`: its consecutive non-blank lines that can
+ * start or continue the issue #2069 run, joined with a space, and the last line used. A line that a
+ * dash list directly follows is a lead section, not part of this paragraph.
+ * @param {string[]} lines
+ * @param {number} start
+ * @returns {{ text: string, end: number }}
+ */
+function proseParagraph(lines, start) {
+  const parts = [proseText(lines[start])];
+  let end = start;
+  while (end + 1 < lines.length) {
+    const next = lines[end + 1];
+    if (next.trim() === "" || !isProseParagraphLine(next)) {
+      break;
+    }
+    if (
+      isFoldableItem(lines[end + 2] ?? "", HEADING_ITEM) ||
+      (lines[end + 2]?.trim() === "" && isFoldableItem(lines[end + 3] ?? "", HEADING_ITEM))
+    ) {
+      break;
+    }
+    parts.push(proseText(next));
+    end++;
+  }
+  return { text: parts.join(" "), end };
+}
+
+/**
+ * The prose sections in `out` from `from`, in order. A section is a group of consecutive non-blank
+ * entries, and its lines join with a space.
+ * @param {string[]} out
+ * @param {number} from
+ * @returns {string[]}
+ */
+function proseSections(out, from) {
+  const sections = [];
+  let section = [];
+  for (let i = from; i < out.length; i++) {
+    if (out[i].trim() === "") {
+      if (section.length > 0) {
+        sections.push(section.join(" "));
+        section = [];
+      }
+      continue;
+    }
+    section.push(out[i].trim());
+  }
+  if (section.length > 0) {
+    sections.push(section.join(" "));
+  }
+  return sections;
+}
+
+/**
  * Folds each section under a report label line into that label's value. A section is a bare dash
- * run, or a prose lead with its `- ` run, and exactly one blank line comes before each.
- * A prose lead follows the prose-lead rules, the whole-line bold heading included.
- * Markers drop, and sections join each other and an existing value with a semicolon and a space.
+ * run, or a prose lead with its `- ` run, and exactly one blank line comes before each. A prose lead
+ * follows the prose-lead rules, the whole-line bold heading included. A run under one label folds
+ * when a plain prose paragraph with no list is followed by a plain prose lead with its dash list:
+ * the paragraph joins as `; <prose>`, and its lines join with a space. A paragraph followed by a bare
+ * dash list and no prose lead starts no such run, and so does a two-line paragraph after the lead
+ * followed by a separate bare dash list. Markers drop, and sections join each other and an existing
+ * value with a semicolon and a space.
  * Each item absorbs the `- ` or `N. ` sub-items right after it, joined with ", ".
  * Null when the guards below reject a label in `sectioned` or a folded label appears again. A table
  * pair is no concern of this fold, because the caller refuses it before it reads this result.
@@ -1131,8 +1241,10 @@ function foldEmptyLabelLists(lines) {
   const folded = [];
   // Labels that took a section fold, labels past the general rule, and labels that broke it.
   // `sectioned` gains a label from the `extra` dash loop, the bare-dash branch, or
-  // `foldedAfterBlank`.
+  // `foldedAfterBlank`. `proseRun` holds the labels that took the issue #2069 run fold, so only
+  // that run folds a following prose section with no list.
   const sectioned = new Set();
+  const proseRun = new Set();
   const nonCanonical = new Set();
   const invalid = new Set();
   // The outside-block text of each label: the folded value with each item's own lead left out,
@@ -1212,25 +1324,63 @@ function foldEmptyLabelLists(lines) {
         ({ items, masked: itemMasked, end } = takeItems(lines, i + 1, HEADING_ITEM));
         foldedAfterBlank = items.length > 0;
       }
-      if (items.length > 0 && at >= 0 && PLAIN_LABEL_LINE.test(out[at])) {
+      // A prose section above this line, with no list, folds together with it into the label that
+      // owns the run (issue #2069). A label line directly above the run keeps the earlier path.
+      const owner = at >= 0 && PLAIN_LABEL_LINE.test(out[at]) ? at : proseSectionOwner(out, at);
+      if (
+        items.length > 0 &&
+        owner >= 0 &&
+        (owner === at || (oneBlankBefore && isProseParagraphLine(line)))
+      ) {
+        const lead = `${proseText(line).replace(/:$/, "")}: `;
         // Adds the label to `invalid` when it is `sectioned` and `oneBlankBefore` is false.
-        if (sectioned.has(at) && !oneBlankBefore) {
-          invalid.add(at);
+        if (sectioned.has(owner) && !oneBlankBefore) {
+          invalid.add(owner);
         }
         if (!oneBlankBefore) {
-          nonCanonical.add(at);
+          nonCanonical.add(owner);
         }
-        folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
-        addMasked(out[at], `${proseText(line).replace(/:$/, "")}: ${itemMasked}`);
-        out[at] = appendToLabel(
-          out[at],
-          `${proseText(line).replace(/:$/, "")}: ${items.join("; ")}`,
-        );
+        folded.push({ label: out[owner].slice(0, out[owner].indexOf(":")), index: owner });
+        if (owner === at) {
+          addMasked(out[owner], `${lead}${itemMasked}`);
+          out[owner] = appendToLabel(out[owner], `${lead}${items.join("; ")}`);
+        } else {
+          // The prose paragraphs above join in order, each with no list as `; <prose>`, and this
+          // leading section last. The fold consumes the raw prose lines, so no text is dropped.
+          const prose = proseSections(out, owner + 1);
+          addMasked(out[owner], [...prose, `${lead}${itemMasked}`].join("; "));
+          out[owner] = appendToLabel(
+            out[owner],
+            [...prose, `${lead}${items.join("; ")}`].join("; "),
+          );
+          sectioned.add(owner);
+          proseRun.add(owner);
+          out.length = owner + 1;
+        }
         if (foldedAfterBlank) {
-          sectioned.add(at);
+          sectioned.add(owner);
           trimTrailingBlanks(out);
         }
         i = end;
+        continue;
+      }
+      if (
+        items.length === 0 &&
+        at >= 0 &&
+        owner === at &&
+        proseRun.has(at) &&
+        oneBlankBefore &&
+        isProseParagraphLine(line) &&
+        !nonCanonical.has(at)
+      ) {
+        // A prose section with no list that follows the lead in the same run joins the value, its
+        // paragraph lines joined with a space (issue #2069).
+        const section = proseParagraph(lines, i);
+        folded.push({ label: out[at].slice(0, out[at].indexOf(":")), index: at });
+        addMasked(out[at], section.text);
+        out[at] = appendToLabel(out[at], section.text);
+        trimTrailingBlanks(out);
+        i = section.end;
         continue;
       }
     } else if (

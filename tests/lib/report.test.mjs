@@ -1624,6 +1624,477 @@ test("parseReportBlock folds a second dash list and its prose line under one lab
   });
 });
 
+// Usefulness: verifies the issue #2069 shape 1 parses, so a prose paragraph with no list followed
+// by a prose lead and its dash list keeps the whole report instead of returning null. No other test
+// covers two prose sections under one label.
+test("parseReportBlock folds a prose paragraph with no list and a later prose lead", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: tests pass",
+    "- **Tests:** pass",
+    "- **Lint:** clean",
+    "",
+    "The parser now folds this paragraph.",
+    "",
+    "The next section follows:",
+    "",
+    "- first",
+    "- second",
+    "",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion: "done",
+    why: "tests pass; **Tests:** pass; **Lint:** clean; The parser now folds this paragraph.; The next section follows: first; second",
+    blockers: "none",
+    checks: "npm test",
+    notes: "none",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies the issue #2069 shape 2 parses, so a two-line prose paragraph, a prose lead
+// with its dash list, and a trailing prose line keep the report instead of returning null.
+test("parseReportBlock folds a two-line prose paragraph and a later prose lead", () => {
+  const response = [
+    "Conclusion: done",
+    "",
+    "The first prose line holds a finding.",
+    "The second prose line completes it.",
+    "",
+    "The evidence follows:",
+    "",
+    "- **Unit:** pass",
+    "- **Lint:** clean",
+    "",
+    "A closing prose line.",
+    "",
+    "Why: tests pass",
+    "",
+    "Blockers: none.",
+    "",
+    "Checks: npm test",
+    "",
+    "Notes:",
+    "- one",
+    "- two ending in a colon",
+    "  - nested one",
+    "  - nested two",
+    "- three",
+    "",
+    "Deferred: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion:
+      "done; The first prose line holds a finding. The second prose line completes it.; The evidence follows: **Unit:** pass; **Lint:** clean; A closing prose line.",
+    why: "tests pass",
+    blockers: "none.",
+    checks: "npm test",
+    notes: "one; two ending in a colon, nested one, nested two; three",
+    deferred: "none",
+  });
+});
+
+// Usefulness: verifies the issue #2069 fold keeps main's value for wrapped, nested, inline, and
+// cross-label inputs, so the new section rule changes no shape that main already parses. The
+// expected values were read from main at b8b2f17d.
+test("parseReportBlock keeps main's values for wrapped, nested, inline, and cross-label inputs", () => {
+  expect(
+    parseReportBlock("Conclusion: done\nWhy: first line\n  second line\nBlockers: none"),
+  ).toEqual({
+    conclusion: "done",
+    why: "first line",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+  expect(
+    parseReportBlock("Conclusion: done\nWhy:\n- a\n  - b\n    - c\nBlockers: none"),
+  ).toMatchObject({ why: "a, b, c" });
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: ok\nBlockers: none\nChecks: npm test\nNotes: n\nDeferred: d",
+    ),
+  ).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: "npm test",
+    notes: "n",
+    deferred: "d",
+  });
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nBlockers: none\nChecks: npm test\nNotes: none\nDeferred: none\nWhy: ok",
+    ),
+  ).toEqual({
+    conclusion: "done",
+    why: "ok",
+    blockers: "none",
+    checks: "npm test",
+    notes: "none",
+    deferred: "none",
+  });
+  expect(
+    parseReportBlock(
+      "Conclusion: done\nWhy: reason\n\nA prose paragraph.\n\nBlockers: none\nChecks: x",
+    ),
+  ).toMatchObject({ why: "reason" });
+});
+
+// Usefulness: verifies the issue #2069 shape keeps the section boundary rule, so two blank lines or
+// no blank line before a prose lead under the paragraph still refuse the dropped dash list.
+test("parseReportBlock returns null for a prose section outside the one-blank-line run", () => {
+  for (const tail of [
+    "Notes: keep\n\nA paragraph.\n\n\nA lead:\n- a",
+    "Notes: keep\n\nA paragraph.\nA lead:\n- a",
+    "Notes: keep\n\nA paragraph.\n\nA lead:\n1. a",
+  ]) {
+    expect(parseReportBlock(`${REPORT}\n${tail}`), tail).toBeNull();
+  }
+});
+
+// Usefulness: verifies the issue #2069 shape 3 keeps main's null, because the parser reads from the
+// last Conclusion line and the labels above it never join the block.
+test("parseReportBlock returns null for the issue #2069 reordered block", () => {
+  const response = [
+    "The run is verified.",
+    "",
+    "Blockers: none.",
+    "Checks: npm test",
+    "Notes: -",
+    "Deferred: none",
+    "",
+    "**Conclusion:** the tests pass.",
+    "",
+    "**Why:** npm test exited 0.",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies two leading plain labels above a final Conclusion keep main's null, as in
+// main.
+test("parseReportBlock returns null for two leading labels above the final Conclusion", () => {
+  expect(
+    parseReportBlock("Blockers: none\nChecks: npm test\n\nConclusion: done\nWhy: ok"),
+  ).toBeNull();
+});
+
+// Usefulness: verifies a stale Blockers and Checks above an explicit Conclusion keep main's null
+// for this two-label draft.
+test("parseReportBlock returns null for a stale draft above an explicit Conclusion", () => {
+  expect(
+    parseReportBlock("Blockers: stale\nChecks: stale checks\n\nConclusion: done\nWhy: ok"),
+  ).toBeNull();
+});
+
+// Usefulness: verifies a stale Blockers and Checks above an inferred prose conclusion keep main's
+// null.
+test("parseReportBlock returns null for a stale draft above an inferred conclusion", () => {
+  expect(
+    parseReportBlock(
+      "Blockers: stale\nChecks: stale checks\n\nThe final result.\n\nWhy: ok\nBlockers: none",
+    ),
+  ).toBeNull();
+});
+
+// Usefulness: verifies the issue #2069 fold stays on the shapes it names, so trailing prose after
+// two bare dash lists with no prose lead stays unparseable as it does in main.
+test("parseReportBlock returns null for trailing prose after bare dash sections", () => {
+  expect(parseReportBlock(`${REPORT}\nNotes: x\n- a\n\n- b\n\nTrailing prose.`)).toBeNull();
+});
+
+// Usefulness: verifies a two-line trailing paragraph in the issue #2069 run joins its lines with a
+// space, so the documented paragraph fold holds for the trailing section of shape 2.
+test("parseReportBlock folds a two-line trailing paragraph in the issue #2069 run", () => {
+  const response = [
+    "Conclusion: done",
+    "",
+    "A leading paragraph.",
+    "",
+    "Evidence:",
+    "- a",
+    "",
+    "The first trailing line.",
+    "The second trailing line.",
+    "",
+    "Why: ok",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toEqual({
+    conclusion:
+      "done; A leading paragraph.; Evidence: a; The first trailing line. The second trailing line.",
+    why: "ok",
+    blockers: "none",
+    checks: null,
+    notes: null,
+    deferred: null,
+  });
+});
+
+// Usefulness: verifies a Markdown horizontal rule never starts the issue #2069 run, so the head
+// keeps main's null when a later evidence list follows it. A thematic break is no prose paragraph.
+test("parseReportBlock returns null for a horizontal rule before a prose lead and list", () => {
+  for (const rule of ["---", "- - -", "***", "___"]) {
+    expect(
+      parseReportBlock(`${REPORT}\nNotes: keep\n\n${rule}\n\nEvidence:\n- a`),
+      rule,
+    ).toBeNull();
+  }
+});
+
+// Usefulness: verifies the issue #2069 run starts only on real plain prose lines, so a Setext
+// heading, a pipe row, a table, a heading, a block quote, a numbers-only line, and a trailing pipe
+// keep main's null when an evidence list follows.
+test("parseReportBlock returns null for Markdown structure before an evidence list", () => {
+  for (const [name, block] of [
+    ["setext equals", "Test results\n==="],
+    ["setext dash", "Test results\n---"],
+    ["pipe row", "| a | b |"],
+    ["table", "| a | b |\n| --- | --- |"],
+    ["heading", "# Test results"],
+    ["quote", "> Test results"],
+    ["indent four", "    Test results"],
+    ["numbers only", "12345"],
+    ["trailing pipe", "a | b |"],
+    ["details", "<details>\n<summary>Details</summary>\n\nThe body.\n</details>"],
+    ["link reference", "[label]: https://example.com"],
+    ["html comment", "<!-- a comment -->"],
+    ["emphasis only", "*emphasis*"],
+  ]) {
+    const response = `Conclusion: done\nWhy: ok\nNotes: keep\n\n${block}\n\nEvidence:\n- a\nBlockers: none`;
+    expect(parseReportBlock(response), name).toBeNull();
+  }
+});
+
+// Usefulness: verifies a fenced block before an evidence list keeps main's fold, because the block
+// blanking removes the fenced lines and the ordinary section rule reads the list.
+test("parseReportBlock keeps main's fold for a fenced block before an evidence list", () => {
+  const response =
+    "Conclusion: done\nWhy: ok\nNotes: keep\n\n```\nTest results\n```\n\nEvidence:\n- a\nBlockers: none";
+  expect(parseReportBlock(response)).toMatchObject({ notes: "keep; Evidence: a" });
+});
+
+// Usefulness: verifies a run whose paragraphs hold inline code, a link, a path, a number start, and
+// a first-word colon still parses, because each opening line starts with a letter or a digit.
+test("parseReportBlock folds plain prose with inline markup and a first-word colon", () => {
+  for (const paragraph of [
+    "See `npm test` and the log.",
+    "Read the [guide](https://example.com) first.",
+    "The path is C:/repo/src/report.mjs.",
+    "2026 results are in.",
+    "Details: the run holds two sections.",
+    "Details:",
+  ]) {
+    const response = `Conclusion: done\nWhy: ok\nNotes: keep\n\n${paragraph}\n\nEvidence:\n- a\nBlockers: none`;
+    expect(parseReportBlock(response), paragraph).toMatchObject({
+      notes: `keep; ${paragraph}; Evidence: a`,
+    });
+  }
+});
+
+// Usefulness: verifies a later two-line paragraph followed by a separate bare dash list keeps main's null, so no later-paragraph rule is general.
+test("parseReportBlock returns null for a later paragraph followed by a bare dash list", () => {
+  const response = [
+    "Conclusion: done",
+    "Why: ok",
+    "Notes: keep",
+    "",
+    "An opening paragraph.",
+    "",
+    "A lead:",
+    "- a",
+    "",
+    "A trailing line one.",
+    "A trailing line two.",
+    "",
+    "- b",
+    "Blockers: none",
+  ].join("\n");
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies a two-line paragraph followed by a bare dash list and no prose lead keeps
+// main's null, because the issue #2069 run needs a plain prose lead with its dash list.
+test("parseReportBlock returns null for a paragraph followed by a bare dash list", () => {
+  const response =
+    "Conclusion: done\nWhy: ok\nNotes: keep\n\nA paragraph line.\nA second line.\n\n- a\nBlockers: none";
+  expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies a bold lead after a plain paragraph does not start the issue #2069 run, as
+// in main, so the dash list under it stays unparseable.
+test("parseReportBlock returns null for a bold lead after a plain paragraph", () => {
+  expect(
+    parseReportBlock(`${REPORT}\nNotes: keep\n\nA paragraph.\n\n**Evidence**\n- a`),
+  ).toBeNull();
+});
+
+// Usefulness: records main's behavior for an earlier draft's lone Blockers line: it joins the block
+// when only blank lines separate it from the final Conclusion, so this change makes no guarantee
+// about an earlier draft.
+test("parseReportBlock reads a lone Blockers line above the final Conclusion", () => {
+  expect(parseReportBlock("Blockers: stale\n\nConclusion: final\nWhy: ok")).toMatchObject({
+    blockers: "stale",
+    conclusion: "final",
+  });
+});
+
+// Usefulness: verifies a repair cannot restore a Checks value from an earlier block, as main refuses
+// it (issue #2069 review). The final block holds only Conclusion and Why.
+test("a repair cannot restore Checks from an earlier block", () => {
+  const original = [
+    "Conclusion: earlier",
+    "Why: earlier",
+    "Blockers: none",
+    "Checks: npm test passed",
+    "",
+    "Conclusion: done",
+    "Why: ok",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test passed",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(false);
+});
+
+// The issue #2069 reordered block: four labels above a final Conclusion and Why.
+const REORDERED_BLOCK = [
+  "Blockers: none.",
+  "Checks: npm test",
+  "Notes: -",
+  "Deferred: none",
+  "",
+  "**Conclusion:** the tests pass.",
+  "",
+  "**Why:** npm test exited 0.",
+].join("\n");
+
+// Usefulness: verifies the issue #2069 shape 3 repair does not match when it restores a substantive
+// value, which is the issue's second branch. The original parse reads from the last Conclusion line
+// and holds only Conclusion and Why; an absent label may gain only a `none` finding, and this repair
+// restores `Checks: npm test`, which the matcher refuses.
+test("a repair of the issue #2069 shape 3 does not match", () => {
+  const repairedResponse = [
+    "Conclusion: the tests pass.",
+    "Why: npm test exited 0.",
+    "Blockers: none.",
+    "Checks: npm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(false);
+});
+
+// Usefulness: verifies a repair of the issue #2069 shape 3 matches when it supplies `none` for all
+// four absent labels. The fixture's parsed block holds only Conclusion and Why; its Checks line is
+// `npm test` and its Notes line is `-` above the final Conclusion, and the repair replaces both.
+test("a repair of the issue #2069 shape 3 matches when it supplies none for the absent labels", () => {
+  const repairedResponse = [
+    "Conclusion: the tests pass.",
+    "Why: npm test exited 0.",
+    "Blockers: none",
+    "Checks: none",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(REORDERED_BLOCK, repairedResponse, report)).toBe(true);
+});
+
+// Usefulness: verifies a repair may drop a wordless Notes dash as main allows, so the repair match
+// keeps main's inherited comparison for a value that holds no word.
+test("a repair drops a wordless Notes dash as main does", () => {
+  const original = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes: -",
+    "Deferred: none",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(true);
+});
+
+// Usefulness: verifies a repair may change a wordless Notes dash to none as main allows, so the
+// inherited comparison still accepts the sole word none.
+test("a repair changes a wordless Notes dash to none as main does", () => {
+  const original = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes: -",
+    "Deferred: none",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test",
+    "Notes: none",
+    "Deferred: none",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(true);
+});
+
+// Usefulness: verifies a star-list repair that drops a dash placeholder matches as main allows, so
+// the repair match keeps main's content comparison when the parser drops the star list.
+test("a star-list repair that drops a dash placeholder matches as main does", () => {
+  const original = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks:",
+    "* npm test failed",
+    "Notes: -",
+  ].join("\n");
+  const repairedResponse = [
+    "Conclusion: done",
+    "Why: ok",
+    "Blockers: none",
+    "Checks: npm test failed",
+    "Notes:",
+  ].join("\n");
+  const report = parseReportBlock(repairedResponse);
+  expect(report).not.toBeNull();
+  expect(repairedReportMatches(original, repairedResponse, report)).toBe(true);
+});
+
+// Usefulness: verifies a response with no Conclusion line still parses when plain prose supplies
+// the conclusion, so the worker prompt must not claim it has no block (issue #2069 review).
+test("parseReportBlock takes prose above the first label as Conclusion without a Conclusion line", () => {
+  expect(parseReportBlock("Done.\n\nBlockers: none\nWhy: ok\nChecks: x")).toMatchObject({
+    conclusion: "Done.",
+    why: "ok",
+    blockers: "none",
+    checks: "x",
+  });
+});
+
 // Usefulness: verifies a second dash run after one blank line joins the value, the #2005 replay row.
 test("parseReportBlock folds a second dash list that one blank line sets apart", () => {
   expect(parseReportBlock(`${REPORT}\nNotes: keep this\n\n- item one\n\n- item two`)).toMatchObject(

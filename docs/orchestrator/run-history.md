@@ -15,7 +15,9 @@ Every `agent-loop role` run keeps its own turn history.
 - Each entry holds `role`, `status`, `verdict`, `head`, and `at`: the role that
   ran, the turn `status`, the reviewer verdict for a reviewer turn (`null`
   otherwise), the head the reviewer turn reviewed (`null` otherwise), and the
-  turn time. Report and response text stay out of the entries.
+  turn time. A failed turn also holds the provider `refusal` class when it has
+  one, so a later call can tell a provider-safety refusal from another failure.
+  Report and response text stay out of the entries.
 - `status` is `ok`, `error`, or `interrupted`. An `interrupted` entry is a turn
   whose step was charged but whose outcome is unknown: no child result was ever
   recorded for it, so its verdict and head are `null`. The call that marks the

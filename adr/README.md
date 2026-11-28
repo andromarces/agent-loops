@@ -9,7 +9,7 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0005 — [User-scope harness integrations only](0005-user-scope-integrations.md) — accepted
 - 0006 — [Require a parent session id for interactive runs](0006-require-parent-session-for-interactive-runs.md) — accepted
 - 0007 — [Concurrent role runs from one parent session](0007-concurrent-session-runs.md) — accepted
-- 0008 — [Keep the turn history in the state file](0008-state-file-turn-history.md) — partially-superseded — Partially superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md).
+- 0008 — [Keep the turn history in the state file](0008-state-file-turn-history.md) — partially-superseded — Partially superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md). Partially superseded by [ADR 0180](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md).
 - 0009 — [Declare a PR input on every run that is PR work](0009-declare-a-pr-input-on-every-run.md) — partially-superseded — Partially superseded by [ADR 0041](0041-declare-the-run-pr-after-init-with-declare-pr.md).
 - 0010 — [A runtime-owned bound on the interactive required-check wait](0010-runtime-owned-required-check-wait-bound.md) — partially-superseded — Partially superseded by [ADR 0048](0048-bind-the-wait-checks-states-to-the-pr-head-commit.md).
 - 0011 — [Supply the required-check status to the reviewer from the runtime](0011-supply-the-required-check-status-to-the-reviewer.md) — superseded — Superseded by [ADR 0024](0024-supply-the-required-check-status-for-a-named-pr.md).
@@ -59,7 +59,7 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0063 — [Close the limits of the abandoned turn directory removal that the process group and the record origin cover](0063-close-the-limits-of-the-abandoned-turn-directory-removal-that-the-process-group-and-the-record-origin-cover.md) — accepted
 - 0068 — [Give the turn of every adapter a private temporary directory](0068-give-the-turn-of-every-adapter-a-private-temporary-directory.md) — partially-superseded — Partially superseded by [ADR 0069](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md). Partially superseded by [ADR 0076](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md).
 - 0069 — [Mark the turn directories that any agent-loop process registered](0069-mark-the-turn-directories-that-any-agent-loop-process-registered.md) — partially-superseded — Partially superseded by [ADR 0076](0076-leave-out-an-inherited-tmpdir-entry-that-the-settle-re-read-no-longer-holds.md). Partially superseded by [ADR 0095](0095-report-inherited-tmpdir-names-as-diagnostics-not-open-items.md).
-- 0070 — [Replace the model of a role that has completed no turn](0070-replace-the-model-of-a-role-that-has-completed-no-turn.md) — partially-superseded — Partially superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md).
+- 0070 — [Replace the model of a role that has completed no turn](0070-replace-the-model-of-a-role-that-has-completed-no-turn.md) — partially-superseded — Partially superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md). Partially superseded by [ADR 0180](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md).
 - 0071 — [End the Codex reviewer command tree on POSIX after a parent signal](0071-end-the-codex-reviewer-command-tree-on-posix-after-a-parent-signal.md) — accepted
 - 0072 — [Keep the orchestrator command tree gap after a headless parent SIGKILL](0072-keep-the-orchestrator-command-tree-gap-after-a-headless-parent-sigkill.md) — accepted
 - 0073 — [Lock the work tree of an active run](0073-lock-the-work-tree-of-an-active-run.md) — accepted
@@ -126,7 +126,7 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0164 — [Retry a first-turn Claude orchestrator abort that names plan mode](0164-retry-a-first-turn-plan-mode-orchestrator-abort.md) — accepted
 - 0165 — [Render the task placeholders in a per-item task text](0165-render-task-placeholders-in-a-per-item-task-text.md) — accepted
 - 0166 — [Restate the full-suite rule beside the worker task text](0166-restate-the-full-suite-rule-beside-the-worker-task-text.md) — accepted
-- 0167 — [Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md) — partially-superseded — Partially superseded by [ADR 0168](0168-fold-a-plain-label-list-item.md).
+- 0167 — [Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md) — partially-superseded — Partially superseded by [ADR 0168](0168-fold-a-plain-label-list-item.md). Partially superseded by [ADR 0182](0182-fold-a-prose-section-with-no-list-under-one-closing-block-label.md).
 - 0168 — [Fold a closing-block list item that opens with a plain label name](0168-fold-a-plain-label-list-item.md) — accepted
 - 0169 — [Name the outcome of a repair that does not recover a closing block](0169-name-the-outcome-of-a-repair-that-does-not-recover-a-block.md) — accepted
 - 0172 — [Remove the empty batch work-tree root when a batch ends](0172-remove-the-empty-batch-work-tree-root.md) — accepted
@@ -137,3 +137,5 @@ Numbers 0054 to 0057, 0059 to 0062, 0064 to 0067, 0077, 0083, 0087, 0089 to 0092
 - 0177 — [Read the undeclared pull request in the batch overlap report](0177-read-the-undeclared-pull-request-in-the-batch-overlap-report.md) — accepted
 - 0178 — [Mark a succeeded loop that does not deliver its item](0178-mark-a-succeeded-loop-that-does-not-deliver-its-item.md) — partially-superseded — Partially superseded by [ADR 0179](0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md).
 - 0179 — [Admit an issue whose only open closing reference names another repository](0179-admit-an-issue-whose-only-open-closing-reference-names-another-repository.md) — accepted
+- 0180 — [Let the parent switch the reviewer model after a provider-safety refusal](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md) — accepted
+- 0182 — [Fold a prose section with no list under one closing-block label](0182-fold-a-prose-section-with-no-list-under-one-closing-block-label.md) — accepted

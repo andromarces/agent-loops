@@ -6,7 +6,14 @@ partially-superseded
 
 Partially superseded by [ADR 0084: Charge no step for a first Codex turn that a model refusal ends](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md). The superseded part is the consequence that the runtime does not tell a refused-model failure from another first-turn failure.
 
-Every decision and every other consequence stays in force.
+Partially superseded by [ADR 0180: Let the parent switch the reviewer model after a provider-safety refusal](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md). The superseded parts are:
+
+- Decision 3's rule that the role has no `ok` entry in `turns`, as it applies to the reviewer whose latest turn is a `provider-safety` refusal, with or without an earlier `ok` turn.
+- Decision 5's rule that the stored session id of the role stays, as it applies to that reviewer path.
+- The alternative 2 rejection of replacing the model of a role that has an `ok` turn, as it applies to that reviewer path.
+- The consequence that a model that a CLI accepts and later rejects after an `ok` turn is not covered, as it applies to that reviewer path.
+
+Every other decision, consequence, and alternative stays in force: decisions 1, 2, 4, and 6, alternatives 1 and 3, and every consequence except the one stated here.
 
 ## Date
 
@@ -22,25 +29,25 @@ The issue lists two approaches: check each model before the first child turn, or
 
 1. **Replace, not probe.** A new operation, `role set-model`, replaces the model of one role. The init does not probe any model.
 2. **Role and value.** The call carries exactly one of `--worker-model` and `--reviewer-model`. The flag names the role and holds the new model.
-3. **Preconditions.** The run is `active`, so no turn is in flight or unresolved. The role is configured. The role has no `ok` entry in `turns`, and a run with no turn history is refused. For OpenCode, the new model must stay valid with the stored effort, with the init rule.
+3. **Preconditions.** The run is `active`, so no turn is in flight or unresolved. The role is configured. The role has no `ok` entry in `turns`, and a run with no turn history is refused. For OpenCode, the new model must stay valid with the stored effort, with the init rule. Superseded for the reviewer whose latest turn is a `provider-safety` refusal by [ADR 0180](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md): that reviewer takes the change with or without an earlier `ok` turn. The rest of this decision stays in force.
 4. **Parent only.** The call needs the stored `--parent-session` id, as `extend` does, and a child role of the run is refused through the `AGENT_LOOP_SPAWNED_RUN` marker.
-5. **Record.** The change is appended to `modelChanges` as `{role, from, to, at}`. The step count, the turn history, and the stored session id of the role stay.
+5. **Record.** The change is appended to `modelChanges` as `{role, from, to, at}`. The step count, the turn history, and the stored session id of the role stay. Superseded for the reviewer provider-safety path by [ADR 0180](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md): a successful model change on that path clears the reviewer session id, with or without an earlier `ok` turn. The rest of this decision stays in force.
 6. **Other calls.** Every other call keeps rejecting a changed model flag.
 
 ## Consequences
 
 - A refused model costs one failed turn and one parent call.
 - The operation works the same for every adapter, because it reads no CLI output and calls no CLI.
-- The live check in issue #710 recorded a result for the five CLIs. Claude Code 2.1.316 and codex-cli 0.167.0-alpha.3 resumed the kept session on the new model. Copilot CLI 1.0.106-2, opencode v0.0.0-dev-481, and agy 1.4.12 kept no session id after the refused turn. Their next turn started a new conversation. OpenCode printed `"sessionID":""` on the refused turn. The executed model is not verified for agy, because its JSON output has no model field.
-- The runtime side is tested with fake adapters: the next dispatch hands the adapter the kept session id and the new model. The adapter side is read from source, and a mocked-argv test holds a stored session id and a model together only for agy (`--conversation` and `--model`) and Copilot (`--session-id` and `--model`). The Claude Code (`--resume` and `--model`), Codex (`exec resume` and `-m`), and OpenCode (`--session` and `--model`) tests hold the session id and the model apart.
-- A model that a CLI accepts and later rejects after an `ok` turn is not covered: that role needs `abort` and a new run.
+- The live check in issue #710 recorded a result for the five CLIs. Claude Code 2.1.316 and codex-cli 0.167.0-alpha.3 resumed the kept session on the new model. Copilot CLI 1.0.106-2, opencode v0.0.0-dev-481, and agy 1.4.12 kept no session id after the refused turn. Their next turn started a new conversation. OpenCode printed `"sessionID":""` on the refused turn. The executed model is not verified for agy, because its JSON output has no model field. This kept-session result covers the no-`ok`-turn model refusal, not a `provider-safety` refusal: a successful model change under [ADR 0180](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md) clears the reviewer session id on that path, so this result does not apply to it.
+- The runtime side is tested with fake adapters: the next dispatch hands the adapter the kept session id and the new model. The adapter side is read from source, and a mocked-argv test holds a stored session id and a model together only for agy (`--conversation` and `--model`) and Copilot (`--session-id` and `--model`). The Claude Code (`--resume` and `--model`), Codex (`exec resume` and `-m`), and OpenCode (`--session` and `--model`) tests hold the session id and the model apart. This kept-session test covers the no-`ok`-turn model refusal, not a `provider-safety` refusal: a successful model change under [ADR 0180](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md) starts a new session on that path.
+- A model that a CLI accepts and later rejects after an `ok` turn is not covered: that role needs `abort` and a new run. Superseded for the reviewer after a `provider-safety` refusal by [ADR 0180](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md): that reviewer takes a successful model change and starts a new session.
 - The runtime does not tell a refused-model failure from another first-turn failure. The parent reads the error text and asks the user for the valid model.
 - The state file gains the optional field `modelChanges`. A state file without it stays valid.
 
 ## Alternatives
 
 1. **Probe each model at init.** Not taken. A probe is one child turn for each role, with its cost, and each CLI words its refusal in its own way, so the runtime needs a refusal reader for each of the five adapters. It also refuses an init for a model that a later turn would have accepted, for example after a quota or account change.
-2. **Replace the model of a role that has an `ok` turn.** Not taken. The conversation already ran on the old model, and one session would then span two models.
+2. **Replace the model of a role that has an `ok` turn.** Not taken. The conversation already ran on the old model, and one session would then span two models. Taken for one case by [ADR 0180](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md): a successful model change for the reviewer whose latest turn is a `provider-safety` refusal, with or without an earlier `ok` turn, starts a new session, so its conversation does not span two models. It stays not taken for every other role and turn.
 3. **Let `dispatch` accept a changed model on a role with no `ok` turn.** Not taken. It leaves the parent-session check out of a change that `extend` and `declare-pr` guard, and it weakens the rule that a later call never changes an init field.
 
 ## Authors

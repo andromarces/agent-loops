@@ -311,6 +311,10 @@ async function refreshLocal(args, { signal } = {}) {
  * `--<role>-model` flag the call carries, and exactly one is required. Only an `active` run takes
  * it: a `dispatched` or `interrupted` run can still have a child on the old model. A role with an
  * `ok` turn is refused, because its conversation already ran on the old model.
+ * The reviewer is the one exception: when its latest turn is a `provider-safety` refusal, with or
+ * without an earlier `ok` turn, a changed model clears its session id, so the next reviewer turn
+ * starts a new session with the init task again. The worker session, the step count, and the turn
+ * history stay.
  */
 async function setModel(args) {
   rejectMisplacedFlags(args, "set-model");
@@ -334,9 +338,22 @@ async function setModel(args) {
       if (!role) {
         throw new RoleError(`set-model is refused: the run has no ${roleName}.`);
       }
+      const roleTurns = Array.isArray(state.turns)
+        ? state.turns.filter((turn) => turn.role === roleName)
+        : null;
+      const latestTurn = roleTurns?.at(-1);
+      // A reviewer takes the change after a provider-safety refusal, with or without an earlier
+      // `ok` turn, because the new session starts empty. A first Codex refusal can keep a thread
+      // id, so that id must not be resumed. Only the latest turn counts: a later turn closes the
+      // exception.
+      const afterProviderSafetyRefusal =
+        roleName === "reviewer" &&
+        roleTurns !== null &&
+        latestTurn?.status === "error" &&
+        latestTurn.refusal === "provider-safety";
       if (
-        !Array.isArray(state.turns) ||
-        state.turns.some((turn) => turn.role === roleName && turn.status === "ok")
+        roleTurns === null ||
+        (!afterProviderSafetyRefusal && roleTurns.some((turn) => turn.status === "ok"))
       ) {
         throw new RoleError(
           `set-model is refused: the ${roleName} completed a turn, or the run kept no turn history, so its conversation may hold the earlier model.`,
@@ -369,7 +386,14 @@ async function setModel(args) {
         to: model,
         at: new Date().toISOString(),
       });
-      // The role keeps its stored session id, which is `null` or unconfirmed after a refused first turn.
+      // The role keeps its stored session id, which is `null` or unconfirmed after a refused first
+      // turn. A successful model change on the provider-safety path starts a new session, so the old
+      // id, its unconfirmed mark, and a replaced-conversation mark go.
+      if (afterProviderSafetyRefusal) {
+        role.sessionId = null;
+        delete role.sessionUnconfirmed;
+        delete role.conversationReplaced;
+      }
       role.model = model;
       await writeState(paths.stateFile, state);
       logInfo(`${roleName} model replaced (${state.stepsUsed} steps used)`);
@@ -525,6 +549,8 @@ export async function main(argv, { agents = defaultAgents, gh } = {}) {
       if (envelope.state === "writing") return envelope.done;
       if (envelope.state === "done") return undefined;
       envelope.state = "done";
+      // A state save can be in flight, so the cancel envelope names no budget. The parent reads
+      // the state file after the restart (ADR 0033).
       const { payload } = errorResult({ isCanceled: true });
       writeAllSync(1, `${JSON.stringify(payload)}\n`);
       return undefined;

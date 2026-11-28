@@ -22,6 +22,23 @@ vi.mock("execa", async (importOriginal) => {
 // Replaces only `writeSync`, so a test can see the bytes that a forced exit writes to fd 1. Also
 // runs `onChunk` after the next streamed file chunk, so a test can cancel a baseline hash.
 const fsDouble = vi.hoisted(() => ({ writeSync: null, onChunk: null, stream: null }));
+
+// Holds a state write at the file write, so a test can signal while a save is in flight.
+const fsPromisesDouble = vi.hoisted(() => ({ beforeWriteFile: null }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    async writeFile(path, data, options) {
+      const hook = fsPromisesDouble.beforeWriteFile;
+      if (hook && String(data).includes('"refusedModel"')) {
+        fsPromisesDouble.beforeWriteFile = null;
+        await hook();
+      }
+      return real.writeFile(path, data, options);
+    },
+  };
+});
 vi.mock("node:fs", async (importOriginal) => {
   const real = await importOriginal();
   return {
@@ -45,7 +62,7 @@ vi.mock("node:fs", async (importOriginal) => {
 import { executeRoleCommand, main } from "../../src/role/index.mjs";
 import { restoreRunsRoot } from "../env-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
-import { createTempRepo, gitAbortingPostTurn } from "../git-helpers.mjs";
+import { cleanRepoGit, createTempRepo, gitAbortingPostTurn } from "../git-helpers.mjs";
 import { processExists } from "../process-helpers.mjs";
 import { RESISTANT_CHILD } from "../sigterm-resistant-fixture.mjs";
 import { within } from "../wait-helpers.mjs";
@@ -143,7 +160,9 @@ test.skipIf(process.platform === "win32")(
       });
       const lines = stdout.trim().split("\n");
       expect(lines).toHaveLength(1);
-      expect(JSON.parse(lines[0])).toMatchObject({ status: "error" });
+      // A state save can be in flight, so the cancel envelope names no budget and the parent
+      // reads the state file.
+      expect(JSON.parse(lines[0])).toEqual({ status: "error", error: "Interrupted by SIGINT" });
     } finally {
       if (pid && processExists(pid)) process.kill(pid, "SIGKILL");
       if (child && child.exitCode === null && child.signalCode === null) {
@@ -158,6 +177,7 @@ test.skipIf(process.platform === "win32")(
 
 afterEach(async () => {
   fsDouble.writeSync = null;
+  fsPromisesDouble.beforeWriteFile = null;
   gitDouble.answer = null;
   restoreRunsRoot();
   await cleanup();
@@ -254,6 +274,62 @@ test("a second SIGINT during a turn writes one complete envelope and the normal 
   });
   try {
     await dispatch.run();
+    expect(exit).toHaveBeenCalledWith(130);
+    const forced = Buffer.from(bytes).toString("utf8");
+    // A state save can be in flight, so the cancel envelope names no budget. The parent reads the
+    // state file after the restart.
+    expect(forced).toBe(`${JSON.stringify({ status: "error", error: "Interrupted by SIGINT" })}\n`);
+    expect(stdout).not.toHaveBeenCalled();
+  } finally {
+    stdout.mockRestore();
+    errorSpy.mockRestore();
+    exit.mockRestore();
+    await dispatch.cleanup();
+  }
+});
+
+// Usefulness: acceptance #2066 — a forced exit while a changed budget save is in flight omits the
+// fields, because the file can still hold the earlier count. The exit stays one bounded envelope.
+test("a second SIGINT during an in-flight state save omits the budget fields", async () => {
+  const exit = vi.spyOn(process, "exit").mockImplementation(() => {});
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  const bytes = [];
+  fsDouble.writeSync = (fd, buffer, offset = 0) => {
+    expect(fd).toBe(1);
+    bytes.push(...Buffer.from(buffer).subarray(offset));
+    return buffer.length - offset;
+  };
+  const stdout = spyStdoutWrite();
+  // Answer Git from memory, so the case starts no Git process.
+  gitDouble.answer = cleanRepoGit;
+  let release;
+  const inFlight = new Promise((resolve) => {
+    fsPromisesDouble.beforeWriteFile = async () => {
+      resolve();
+      await new Promise((done) => {
+        release = done;
+      });
+    };
+  });
+  const dispatch = await dispatchInProcess({
+    fake1: {
+      async run() {
+        // A first-turn model refusal refunds the charge, so the in-flight save holds a changed
+        // count while the file still holds the charge.
+        throw Object.assign(new Error("The 'gpt-6.1' model is not supported"), {
+          refusedModel: "gpt-6.1",
+        });
+      },
+    },
+    fake2: recordingAdapter([]),
+  });
+  try {
+    const running = dispatch.run();
+    await inFlight;
+    process.emit("SIGINT");
+    process.emit("SIGINT");
+    release();
+    await running;
     expect(exit).toHaveBeenCalledWith(130);
     expect(Buffer.from(bytes).toString("utf8")).toBe(
       `${JSON.stringify({ status: "error", error: "Interrupted by SIGINT" })}\n`,
