@@ -681,7 +681,7 @@ function withBudget(payload, state) {
   return { ...payload, stepsUsed: state.stepsUsed, maxSteps: state.maxSteps };
 }
 
-/** Records the budget of a state that was just saved, for a forced exit or a late error. */
+/** Records the budget of a state that was just saved, for an error that ends dispatch after it. */
 function rememberSavedBudget(savedBudget, state) {
   savedBudget.stepsUsed = state.stepsUsed;
   savedBudget.maxSteps = state.maxSteps;

@@ -9,8 +9,8 @@ export class RoleError extends Error {}
 const consume = () => {};
 
 /**
- * The budget of the state that dispatch last saved, when the error carries one. It keeps the
- * forced-exit envelope short and reports only values that reached the state file.
+ * The budget of the state that dispatch last saved, when the error carries one. It keeps an error
+ * envelope short and reports only values that reached the state file.
  */
 function savedBudgetFields(err) {
   const saved = readProp(err, "savedBudget");

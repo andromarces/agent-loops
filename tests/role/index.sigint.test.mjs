@@ -62,7 +62,7 @@ vi.mock("node:fs", async (importOriginal) => {
 import { executeRoleCommand, main } from "../../src/role/index.mjs";
 import { restoreRunsRoot } from "../env-helpers.mjs";
 import { removePath } from "../fs-helpers.mjs";
-import { createTempRepo, gitAbortingPostTurn } from "../git-helpers.mjs";
+import { cleanRepoGit, createTempRepo, gitAbortingPostTurn } from "../git-helpers.mjs";
 import { processExists } from "../process-helpers.mjs";
 import { RESISTANT_CHILD } from "../sigterm-resistant-fixture.mjs";
 import { within } from "../wait-helpers.mjs";
@@ -300,6 +300,8 @@ test("a second SIGINT during an in-flight state save omits the budget fields", a
     return buffer.length - offset;
   };
   const stdout = spyStdoutWrite();
+  // Answer Git from memory, so the case starts no Git process.
+  gitDouble.answer = cleanRepoGit;
   let release;
   const inFlight = new Promise((resolve) => {
     fsPromisesDouble.beforeWriteFile = async () => {
