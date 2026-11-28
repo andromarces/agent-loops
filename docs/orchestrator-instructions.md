@@ -168,7 +168,12 @@ Example reviewer envelope:
   and gave no review result. An envelope with this field carries no `transient` field.
   - Do not resend the same prompt.
   - Ask the maintainer whether to resend a reworded prompt that limits the review method
-    (read code, run existing tests, build no new probe inputs), or abort.
+    (read code, run existing tests, build no new probe inputs), switch the reviewer model, or abort.
+  - When the latest reviewer turn is this refusal, with or without an earlier `ok` turn, switch
+    the reviewer model with
+    `role set-model --reviewer-model <model> --parent-session <id>`. A successful model change
+    starts a new session with the init task, and the worker session, the step count, and the turn
+    history stay.
 - A reviewer envelope carries `verdict`: `accept`, `reject`, or `unknown` when
   the required `Verdict:` line is missing or malformed. Treat `unknown` as not
   accepted. Process success never implies acceptance.
