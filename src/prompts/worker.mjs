@@ -107,6 +107,11 @@ const conclusionFirstRule =
 const laterTurnTmpdirRule =
   "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.";
 
+// A resumed session can hold a conversation that started before the turn-directory clause, so every
+// later turn repeats the complete rule next to the temporary-path rule.
+const laterTurnTempRemovalRule =
+  "Never remove the directory that `TMPDIR`, `TEMP`, or `TMP` names, or an entry in it that the coding tool or the runtime created. Put your own scratch files in a subdirectory of it that you create and remove only that subdirectory, or, when you cannot create it, put the scratch files directly in that directory and remove only those files. The runtime removes only the private turn directory that it created.";
+
 /**
  * Builds a worker turn prompt. `firstTurn` adds the full preamble. A later turn gets a shorter
  * prompt with the rules that its conversation still needs. `task` adds the init task block.
@@ -116,9 +121,10 @@ const laterTurnTmpdirRule =
 export function workerPrompt(prompt, firstTurn = false, task = null, slotOptions = {}) {
   if (!firstTurn) {
     // A later turn can commit and push a fix with no preamble yet. So it repeats the push,
-    // hook-output, PR-body, closing-issues, commit-link, staging, temporary-path, and closing-block
-    // rules. It repeats the closing block because a worker drifts from it as the conversation
-    // grows. The rules also name the `Conclusion:` line as its first line.
+    // hook-output, PR-body, closing-issues, commit-link, staging, temporary-path,
+    // temporary-removal, and closing-block rules. It repeats the closing block because a worker
+    // drifts from it as the conversation grows. The rules also name the `Conclusion:` line as
+    // its first line.
     return escapeLineSeparators(`${prompt}
 
 ${fullSuiteRule(slotOptions)}
@@ -126,6 +132,8 @@ ${fullSuiteRule(slotOptions)}
 ${prTurnRules.join("\n\n")}
 
 ${laterTurnTmpdirRule}
+
+${laterTurnTempRemovalRule}
 
 ${conclusionFirstRule}
 
@@ -165,7 +173,7 @@ Your role:
 - State every result the parent needs, such as findings, drafts, decisions, and open questions, inside the closing block, in full on its label line. The one exception is quoted or multi-paragraph text, which goes before the block with one label that refers to it. The closing-block rule below states it. Never refer to any other text outside the block, for example "the decisions above". The parent reads only the block.
 - Start no background watcher, Monitor, or poller. Wait for each result in the foreground.
 - ${tmpdirRule}
-- ${tempRemovalRule("work tree", " A PR body file in the system temporary directory is one example.")}
+- ${tempRemovalRule("work tree", " A PR body file in the system temporary directory is one example.", { turnDirectory: true })}
 - ${processRule}
 - ${secretFileRule}
 - If a late event arrives after the closing block, end again with the closing block for the whole turn. The parent reads only your last message.

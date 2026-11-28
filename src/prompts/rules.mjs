@@ -313,10 +313,17 @@ export const tempPathRule = (place, literalExample = "") =>
 
 /**
  * The temporary-file removal rule of the worker and reviewer prompts. `place` names the tree that
- * the temporary path lies outside of, and `example` optionally adds one example sentence.
+ * the temporary path lies outside of, and `example` optionally adds one example sentence. When
+ * `turnDirectory` is true, the rule keeps the directory that the inherited variables name
+ * off-limits, limits removal to the worker's own scratch subdirectory, and names the fallback when
+ * that subdirectory cannot be created (issue #2055).
  */
-export const tempRemovalRule = (place, example = "") =>
-  `Before the closing block, remove every temporary file or directory that this turn created outside the ${place}. Name in Notes any entry that you cannot remove.${example}`;
+export const tempRemovalRule = (place, example = "", { turnDirectory = false } = {}) => {
+  if (!turnDirectory) {
+    return `Before the closing block, remove every temporary file or directory that this turn created outside the ${place}. Name in Notes any entry that you cannot remove.${example}`;
+  }
+  return `Before the closing block, remove the temporary entries that this turn created outside the ${place}. Never remove the directory that \`TMPDIR\`, \`TEMP\`, or \`TMP\` names, or an entry in it that the coding tool or the runtime created. Put your own scratch files in a subdirectory of it that you create, and remove only that subdirectory. If you cannot create the subdirectory, put the scratch files directly in that directory and remove only those files. The runtime removes the private turn directory that it created. Name in Notes any entry that you cannot remove.${example}`;
+};
 
 // Shared clauses of the probe-copy rule. Each clause appears once, and both variants interpolate it.
 const PROBE_UNRESOLVED = "report the probe as unresolved in Checks.";
