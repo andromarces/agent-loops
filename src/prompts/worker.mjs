@@ -107,6 +107,11 @@ const conclusionFirstRule =
 const laterTurnTmpdirRule =
   "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.";
 
+// A resumed session can hold a conversation that started before the turn-directory clause, so every
+// later turn repeats its no-removal half next to the temporary-path rule.
+const laterTurnTempRemovalRule =
+  "Never remove the turn temporary directory that `TMPDIR`, `TEMP`, or `TMP` names, or an entry that the coding tool or the runtime created in it.";
+
 /**
  * Builds a worker turn prompt. `firstTurn` adds the full preamble. A later turn gets a shorter
  * prompt with the rules that its conversation still needs. `task` adds the init task block.
@@ -116,9 +121,10 @@ const laterTurnTmpdirRule =
 export function workerPrompt(prompt, firstTurn = false, task = null, slotOptions = {}) {
   if (!firstTurn) {
     // A later turn can commit and push a fix with no preamble yet. So it repeats the push,
-    // hook-output, PR-body, closing-issues, commit-link, staging, temporary-path, and closing-block
-    // rules. It repeats the closing block because a worker drifts from it as the conversation
-    // grows. The rules also name the `Conclusion:` line as its first line.
+    // hook-output, PR-body, closing-issues, commit-link, staging, temporary-path,
+    // temporary-removal, and closing-block rules. It repeats the closing block because a worker
+    // drifts from it as the conversation grows. The rules also name the `Conclusion:` line as
+    // its first line.
     return escapeLineSeparators(`${prompt}
 
 ${fullSuiteRule(slotOptions)}
@@ -126,6 +132,8 @@ ${fullSuiteRule(slotOptions)}
 ${prTurnRules.join("\n\n")}
 
 ${laterTurnTmpdirRule}
+
+${laterTurnTempRemovalRule}
 
 ${conclusionFirstRule}
 

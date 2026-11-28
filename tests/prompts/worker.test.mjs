@@ -272,6 +272,16 @@ test("later worker turns state that TMPDIR changes every turn", () => {
   );
 });
 
+// Usefulness: verifies acceptance #2055 for a resumed worker turn, which gets no preamble and can
+// continue a session that started before the clause. Without the repeated no-removal clause it can
+// still delete coding-tool output in the turn temporary directory.
+test("later worker turns keep cleanup off the turn temporary directory", () => {
+  const prompt = workerPrompt("fix the reviewer finding", false).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "Never remove the turn temporary directory that `TMPDIR`, `TEMP`, or `TMP` names, or an entry that the coding tool or the runtime created in it.",
+  );
+});
+
 // Usefulness: verifies later worker turns carry the task text and no preamble; the session already
 // holds the instructions. The one rule they repeat is covered by the PR body test.
 test("later worker turns pass the prompt without the preamble", () => {
@@ -480,14 +490,15 @@ test("first worker turn tells the worker to remove temporary files it created ou
 
 // Usefulness: verifies acceptance #2055: a worker that removed the turn temporary directory or
 // the tool output in it lost a command result. The clause names the runtime as the owner of that
-// directory and limits removal to the worker's own scratch entries.
+// directory and limits removal to the worker's own scratch entries, and it names the directory by
+// every variable that a Windows fallback can set.
 test("first worker turn keeps cleanup off the turn temporary directory and tool output", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "The runtime removes the turn temporary directory that `TMPDIR` names, so never remove that directory or an entry that the coding tool or the runtime created in it.",
+    "The runtime removes the turn temporary directory that `TMPDIR`, `TEMP`, or `TMP` names, so never remove that directory or an entry that the coding tool or the runtime created in it.",
   );
   expect(prompt).toContain(
-    "Put your own scratch files in your own subdirectory of `TMPDIR`, and remove only the scratch entries that you created yourself.",
+    "Put your own scratch files in your own subdirectory of that turn temporary directory, and remove only the scratch entries that you created yourself.",
   );
 });
 

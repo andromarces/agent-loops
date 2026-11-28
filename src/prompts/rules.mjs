@@ -321,7 +321,7 @@ export const tempRemovalRule = (place, example = "", { turnDirectory = false } =
   if (!turnDirectory) {
     return `Before the closing block, remove every temporary file or directory that this turn created outside the ${place}. Name in Notes any entry that you cannot remove.${example}`;
   }
-  return `Before the closing block, remove the temporary entries that this turn created outside the ${place}. The runtime removes the turn temporary directory that \`TMPDIR\` names, so never remove that directory or an entry that the coding tool or the runtime created in it. Put your own scratch files in your own subdirectory of \`TMPDIR\`, and remove only the scratch entries that you created yourself. Name in Notes any entry that you cannot remove.${example}`;
+  return `Before the closing block, remove the temporary entries that this turn created outside the ${place}. The runtime removes the turn temporary directory that \`TMPDIR\`, \`TEMP\`, or \`TMP\` names, so never remove that directory or an entry that the coding tool or the runtime created in it. Put your own scratch files in your own subdirectory of that turn temporary directory, and remove only the scratch entries that you created yourself. Name in Notes any entry that you cannot remove.${example}`;
 };
 
 // Shared clauses of the probe-copy rule. Each clause appears once, and both variants interpolate it.
