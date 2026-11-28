@@ -273,12 +273,15 @@ test("later worker turns state that TMPDIR changes every turn", () => {
 });
 
 // Usefulness: verifies acceptance #2055 for a resumed worker turn, which gets no preamble and can
-// continue a session that started before the clause. Without the repeated no-removal clause it can
-// still delete coding-tool output in the turn temporary directory.
+// continue a session that started before the clause. The repeated sentence keeps the same ownership
+// and the same scratch-subdirectory limit as the first-turn rule.
 test("later worker turns keep cleanup off the turn temporary directory", () => {
   const prompt = workerPrompt("fix the reviewer finding", false).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "Never remove the turn temporary directory that `TMPDIR`, `TEMP`, or `TMP` names, or an entry that the coding tool or the runtime created in it.",
+    "Never remove the directory that `TMPDIR`, `TEMP`, or `TMP` names, or an entry in it that the coding tool or the runtime created.",
+  );
+  expect(prompt).toContain(
+    "Keep your scratch files in a subdirectory that you create there, remove only it, and when you cannot create it, remove only the scratch files that you put directly in that directory.",
   );
 });
 
@@ -489,17 +492,22 @@ test("first worker turn tells the worker to remove temporary files it created ou
 });
 
 // Usefulness: verifies acceptance #2055: a worker that removed the turn temporary directory or
-// the tool output in it lost a command result. The clause names the runtime as the owner of that
-// directory and limits removal to the worker's own scratch entries, and it names the directory by
-// every variable that a Windows fallback can set.
+// the tool output in it lost a command result. The clause holds on the fallback path, where the
+// inherited TEMP directory stays and can deny subdirectory creation, and it claims only the removal
+// that the runtime performs.
 test("first worker turn keeps cleanup off the turn temporary directory and tool output", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "The runtime removes the turn temporary directory that `TMPDIR`, `TEMP`, or `TMP` names, so never remove that directory or an entry that the coding tool or the runtime created in it.",
+    "Never remove the directory that `TMPDIR`, `TEMP`, or `TMP` names, or an entry in it that the coding tool or the runtime created.",
   );
   expect(prompt).toContain(
-    "Put your own scratch files in your own subdirectory of that turn temporary directory, and remove only the scratch entries that you created yourself.",
+    "Put your own scratch files in a subdirectory of it that you create, and remove only that subdirectory.",
   );
+  expect(prompt).toContain(
+    "If you cannot create the subdirectory, put the scratch files directly in that directory and remove only those files.",
+  );
+  expect(prompt).toContain("The runtime removes the private turn directory that it created.");
+  expect(prompt).not.toContain("The runtime removes the turn temporary directory that");
 });
 
 // Usefulness: verifies acceptance #1596, where the worker preamble forbids a literal `/tmp` path even when TMPDIR points elsewhere, because another run can hold the name.
