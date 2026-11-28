@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted
+partially-superseded
+
+Superseded by [ADR 0183: Let the parent switch the reviewer CLI after a provider-safety refusal](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md). The superseded part is decision 6's rule that `--reviewer` cannot change after init and that only the model moves, the consequence that names only another model, the consequence that names only the model switch in the orchestrator instructions, alternative 1's rejection of a CLI switch because `--reviewer` is an init field, alternative 5's rule that only a model change clears the session, and decision 5's no-write promise as it applies to a request that also changes the CLI. Each replaced part applies only to the reviewer whose latest turn is a `provider-safety` refusal. Every other part stays in force: the exception itself, the new-session rule, the recorded `modelChanges` entry, the guard list, and every other consequence and alternative.
 
 ## Supersedes
 
@@ -64,16 +66,25 @@ The refusal therefore needs a new session on that path too, not only after an `o
 5. **Keep every other guard.** Exactly one model flag is required; the run is `active`; the caller
    passes the stored `--parent-session` id; a child role is refused through the
    `AGENT_LOOP_SPAWNED_RUN` marker; the role is configured; a run with no turn history is refused;
-   the OpenCode model and effort pair stays valid; and a request for the current model succeeds with
-   no history entry and no state write, so it does not reset the session.
+   the OpenCode model and effort pair stays valid; and a model-only request for the current model
+   succeeds with no history entry and no state write, so it does not reset the session. Superseded
+   in part by
+   [ADR 0183](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md): a
+   CLI change with the same model string is a change, and it is recorded in `cliChanges`. The
+   model-only request keeps this promise.
 6. **The CLI stays an init field.** `--reviewer` cannot change after init. Only the model moves on
-   this path. Every other call keeps rejecting a changed model flag.
+   this path. Superseded by [ADR 0183](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md):
+   on this path `role set-model` may also change the reviewer CLI, with its model and effort, on
+   the same guard. Every other call keeps rejecting a changed model flag.
 
 ## Consequences
 
 - A reviewer that keeps a provider-safety refusal can move to another model on the same run, and
   the worker keeps its conversation. This holds on a first refusal too, where a kept thread id is
-  discarded instead of resumed.
+  discarded instead of resumed. Superseded in part by
+  [ADR 0183](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md): the
+  reviewer may also move to another CLI, with its model and effort, on the same run, and the
+  worker keeps its conversation there too.
 - The old reviewer conversation is discarded. Its unreviewed history is lost by design, because a
   refusal that a model change answers cannot continue that conversation.
 - A provider refusal that an adapter does not mark with `refusal: "provider-safety"` is not
@@ -82,13 +93,17 @@ The refusal therefore needs a new session on that path too, not only after an `o
 - The turn history gains one optional field, so a state file without it stays valid and its failed
   turns carry no refusal class.
 - The interactive orchestrator instructions name the switch beside the provider-safety parent
-  action, so a parent can act without inventing an operation. The headless prompt keeps its abort
-  action, because a headless run holds no role state and ADR 0148 keeps that operation out.
+  action, so a parent can act without inventing an operation. Superseded in part by
+  [ADR 0183](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md): the
+  instructions name the model and the CLI switch. The headless prompt keeps its abort action,
+  because a headless run holds no role state and ADR 0148 keeps that operation out.
 
 ## Alternatives
 
 1. **Switch the reviewer CLI instead of its model.** Not taken. `--reviewer` is an init field, and a
-   CLI switch changes more state than this repair needs.
+   CLI switch changes more state than this repair needs. Superseded by
+   [ADR 0183](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md): the
+   CLI switch is now an option of the same path, with its model and effort.
 2. **Keep the reviewer session and change its model.** Not taken, with or without an earlier `ok`
    turn. The conversation already ran on the refused model, and one session would span two models,
    against ADR 0070's reason for the `ok`-turn guard.
@@ -100,6 +115,10 @@ The refusal therefore needs a new session on that path too, not only after an `o
 5. **Reset the reviewer session on every no-`ok`-turn failure.** Not taken. A model refusal or
    another failure can leave a usable id, and the CLI resumes it on the new model. Only a
    successful model change whose latest turn is the provider-safety class clears the session.
+   Superseded in part by
+   [ADR 0183](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md): a
+   successful CLI change on that path clears the session too. The rest of this alternative stays
+   in force.
 
 ## Authors
 
@@ -109,6 +128,7 @@ Andro Marces
 
 - [Issue #2065: Let the parent switch the reviewer model after a provider-safety refusal](https://github.com/andromarces/agent-loops/issues/2065)
 - [PR #2074: Let the parent switch the reviewer model after a provider-safety refusal](https://github.com/andromarces/agent-loops/pull/2074)
+- [ADR 0183: Let the parent switch the reviewer CLI after a provider-safety refusal](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md)
 - [ADR 0070: Replace the model of a role that has completed no turn](0070-replace-the-model-of-a-role-that-has-completed-no-turn.md)
 - [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
 - [ADR 0084: Charge no step for a first Codex turn that a model refusal ends](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md)

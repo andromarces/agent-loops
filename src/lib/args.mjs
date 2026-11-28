@@ -158,7 +158,7 @@ export function recordedReviewerSandbox(recorded, legacyFlag) {
  * said otherwise.
  * @returns {string | null} the refusal, or null when the flag is absent or valid
  */
-function reviewerSandboxError(reviewerSandbox, reviewerKind) {
+export function reviewerSandboxError(reviewerSandbox, reviewerKind) {
   if (reviewerSandbox !== null && reviewerKind !== "codex") {
     return "--reviewer-sandbox requires --reviewer codex.";
   }

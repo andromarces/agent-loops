@@ -46,6 +46,26 @@ export function storedReviewerSandbox(state) {
 }
 
 /**
+ * The reviewer sandbox mode that the state records, or null when it records no field. Unlike
+ * storedReviewerSandbox, this reads the fields for every reviewer kind, so a CLI switch can tell a
+ * stored option from an absent one. A legacy `reviewerWorkspaceWrite` field maps to its recorded
+ * mode.
+ * @throws {RoleError} when a present field is not one of the three modes
+ */
+export function heldReviewerSandbox(state) {
+  if (state.reviewerSandbox === undefined && state.reviewerWorkspaceWrite === undefined) {
+    return null;
+  }
+  const mode = recordedReviewerSandbox(state.reviewerSandbox, state.reviewerWorkspaceWrite);
+  if (mode === null) {
+    throw new RoleError(
+      `State file field reviewerSandbox must be one of ${REVIEWER_SANDBOX_MODES.join(", ")}, got: ${JSON.stringify(state.reviewerSandbox)}.`,
+    );
+  }
+  return mode;
+}
+
+/**
  * The `--copy-local-path` values of `args` as sorted, unique, root-relative paths.
  * @throws {RoleError} for a path that `normalizeLocalPath` refuses
  */
@@ -93,6 +113,8 @@ export function validateInitFlags(args, agents = {}) {
  * Later calls read configuration from the state file and reject any change.
  * `extend` passes `maxSteps` in `allowed`, because raising it is that operation's
  * purpose. `set-model` passes `roleModel`, and `declare-pr` passes `pr`.
+ * `set-model` also passes `reviewerCli`: it allows the reviewer kind and effort to change only
+ * when the call names a different reviewer CLI.
  */
 export function rejectInitFlagChanges(args, state, allowed = []) {
   // The command is compared by digest, so the refusal never prints a stored value.
@@ -156,6 +178,11 @@ export function rejectInitFlagChanges(args, state, allowed = []) {
       );
     }
   }
+  // A CLI change names the reviewer CLI. Only that path may change the reviewer kind, and its
+  // effort moves only with that kind. A call that names the stored kind keeps the init check.
+  const reviewerKindChange =
+    args.reviewer !== null &&
+    normalizeAgent(args.reviewer) !== (state.roles?.reviewer?.kind ?? null);
   for (const roleName of CHILD_ROLE_KINDS) {
     for (const [flag, path] of [
       [roleName, "kind"],
@@ -164,6 +191,13 @@ export function rejectInitFlagChanges(args, state, allowed = []) {
     ]) {
       const value = args[flag];
       if (path === "model" && allowed.includes("roleModel")) {
+        continue;
+      }
+      if (
+        roleName === "reviewer" &&
+        allowed.includes("reviewerCli") &&
+        ((path === "kind" && args.reviewer !== null) || (path === "effort" && reviewerKindChange))
+      ) {
         continue;
       }
       if (value !== null) {

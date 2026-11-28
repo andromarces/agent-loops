@@ -4,8 +4,8 @@
 // file instead of an in-process orchestrator. Stdout carries exactly one JSON
 // envelope per invocation, except `--help`, which prints plain usage. All logs go
 // to stderr.
-import { defaultAgents } from "../agents/index.mjs";
-import { CHILD_ROLE_KINDS, openCodeOptionsError } from "../lib/args.mjs";
+import { defaultAgents, normalizeAgent, supportedAgents } from "../agents/index.mjs";
+import { CHILD_ROLE_KINDS, openCodeOptionsError, reviewerSandboxError } from "../lib/args.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/checks/check-wait.mjs";
 import { isSpawnedByRun } from "../lib/exec.mjs";
@@ -28,9 +28,11 @@ import { withTimeBound } from "../lib/time-bound.mjs";
 import { cancelOnSigInt } from "../lib/sigint.mjs";
 import { recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
 import {
+  heldReviewerSandbox,
   parseRoleArgsWithOperations,
   rejectInitFlagChanges,
   rejectMisplacedFlags,
+  storedReviewerSandbox,
 } from "./args.mjs";
 import { dispatch, recordUncertainTurn } from "./dispatch.mjs";
 import { RoleError, printEnvelope, errorResult, writeAllSync } from "./envelope.mjs";
@@ -312,11 +314,12 @@ async function refreshLocal(args, { signal } = {}) {
  * it: a `dispatched` or `interrupted` run can still have a child on the old model. A role with an
  * `ok` turn is refused, because its conversation already ran on the old model.
  * The reviewer is the one exception: when its latest turn is a `provider-safety` refusal, with or
- * without an earlier `ok` turn, a changed model clears its session id, so the next reviewer turn
- * starts a new session with the init task again. The worker session, the step count, and the turn
- * history stay.
+ * without an earlier `ok` turn, a changed model or CLI clears its session id, so the next reviewer
+ * turn starts a new session with the init task again. A CLI change also requires
+ * `--reviewer <cli>`, a CLI that an adapter supports, and a model and effort that the new CLI
+ * accepts. The worker session, the step count, and the turn history stay.
  */
-async function setModel(args) {
+async function setModel(args, { agents = {} } = {}) {
   rejectMisplacedFlags(args, "set-model");
   const named = CHILD_ROLE_KINDS.filter((name) => args[`${name}Model`] !== null);
   if (named.length !== 1) {
@@ -324,6 +327,7 @@ async function setModel(args) {
   }
   const [roleName] = named;
   const model = args[`${roleName}Model`];
+  const requestedReviewerKind = args.reviewer === null ? null : normalizeAgent(args.reviewer);
 
   return withOpenRun(
     args,
@@ -337,6 +341,15 @@ async function setModel(args) {
       const role = state.roles?.[roleName];
       if (!role) {
         throw new RoleError(`set-model is refused: the run has no ${roleName}.`);
+      }
+      const cliChanged =
+        roleName === "reviewer" &&
+        requestedReviewerKind !== null &&
+        requestedReviewerKind !== role.kind;
+      if (roleName !== "reviewer" && cliChangedReviewerFlag(args, state)) {
+        throw new RoleError(
+          "set-model is refused: a CLI change names only the reviewer, with --reviewer and --reviewer-model.",
+        );
       }
       const roleTurns = Array.isArray(state.turns)
         ? state.turns.filter((turn) => turn.role === roleName)
@@ -359,12 +372,43 @@ async function setModel(args) {
           `set-model is refused: the ${roleName} completed a turn, or the run kept no turn history, so its conversation may hold the earlier model.`,
         );
       }
-      const refusal = openCodeOptionsError(roleName, role.kind, model, role.effort);
+      if (cliChanged && !afterProviderSafetyRefusal) {
+        throw new RoleError(
+          "set-model is refused: a CLI change needs a reviewer whose latest turn is a provider-safety refusal.",
+        );
+      }
+      const nextKind = cliChanged ? requestedReviewerKind : role.kind;
+      const previousKind = role.kind;
+      // A CLI switch replaces the role's model and effort together, so an omitted effort clears it.
+      const nextEffort = cliChanged ? args.reviewerEffort : role.effort;
+      if (cliChanged && !supportedAgents.has(nextKind) && !Object.hasOwn(agents ?? {}, nextKind)) {
+        throw new RoleError(`Unsupported reviewer CLI: ${args.reviewer}.`);
+      }
+      if (cliChanged) {
+        // A stored Codex sandbox is a CLI-specific containment. A target that does not support it
+        // must not drop it, and a target that does support it keeps its recorded mode. A run with
+        // no stored sandbox and a target other than Codex carries no option to compare.
+        const heldSandbox =
+          previousKind === "codex" ? storedReviewerSandbox(state) : heldReviewerSandbox(state);
+        if (heldSandbox !== null && nextKind !== "codex") {
+          const sandboxRefusal = reviewerSandboxError(
+            heldSandbox === "none" ? null : heldSandbox,
+            nextKind,
+          );
+          if (sandboxRefusal) {
+            throw new RoleError(sandboxRefusal);
+          }
+        }
+      }
+      // Apply the same model and effort rule that init applies for the next CLI. A model or effort
+      // that init only passes through stays accepted on a CLI switch.
+      const refusal = openCodeOptionsError(roleName, nextKind, model, nextEffort);
       if (refusal) {
         throw new RoleError(refusal);
       }
       const previousModel = role.model ?? null;
-      if (model === previousModel) {
+      const modelChanged = model !== previousModel;
+      if (!modelChanged && !cliChanged) {
         // Idempotent success: no change happened, so no history entry and no state write.
         return {
           exitCode: 0,
@@ -377,33 +421,65 @@ async function setModel(args) {
           },
         };
       }
-      if (!Array.isArray(state.modelChanges)) {
-        state.modelChanges = [];
+      const at = new Date().toISOString();
+      if (modelChanged) {
+        if (!Array.isArray(state.modelChanges)) {
+          state.modelChanges = [];
+        }
+        state.modelChanges.push({ role: roleName, from: previousModel, to: model, at });
       }
-      state.modelChanges.push({
-        role: roleName,
-        from: previousModel,
-        to: model,
-        at: new Date().toISOString(),
-      });
+      if (cliChanged) {
+        if (!Array.isArray(state.cliChanges)) {
+          state.cliChanges = [];
+        }
+        state.cliChanges.push({ role: roleName, from: previousKind, to: nextKind, at });
+      }
+      // The new reviewer kind does not take the Codex sandbox option. A contained mode was refused
+      // above, so only a `none` mode or an absent field remains.
+      if (cliChanged && nextKind !== "codex") {
+        delete state.reviewerSandbox;
+        delete state.reviewerWorkspaceWrite;
+      }
       // The role keeps its stored session id, which is `null` or unconfirmed after a refused first
-      // turn. A successful model change on the provider-safety path starts a new session, so the old
-      // id, its unconfirmed mark, and a replaced-conversation mark go.
+      // turn. A successful change on the provider-safety path starts a new session, so the old id,
+      // its unconfirmed mark, and a replaced-conversation mark go. A CLI change reaches this path
+      // only, so the new CLI never resumes the old CLI's session.
       if (afterProviderSafetyRefusal) {
         role.sessionId = null;
         delete role.sessionUnconfirmed;
         delete role.conversationReplaced;
       }
+      role.kind = nextKind;
       role.model = model;
+      role.effort = nextEffort;
       await writeState(paths.stateFile, state);
-      logInfo(`${roleName} model replaced (${state.stepsUsed} steps used)`);
+      logInfo(
+        cliChanged
+          ? `${roleName} CLI replaced (${previousKind} -> ${nextKind}) (${state.stepsUsed} steps used)`
+          : `${roleName} model replaced (${state.stepsUsed} steps used)`,
+      );
       return {
         exitCode: 0,
-        payload: { status: "ok", lifecycle: state.lifecycle, role: roleName, model, previousModel },
+        payload: {
+          status: "ok",
+          lifecycle: state.lifecycle,
+          role: roleName,
+          model,
+          previousModel,
+          ...(cliChanged ? { kind: nextKind, previousKind } : {}),
+        },
       };
     },
-    ["roleModel"],
+    ["roleModel", "reviewerCli"],
     "set-model",
+  );
+}
+
+/** True when the call names a reviewer CLI other than the stored one. */
+function cliChangedReviewerFlag(args, state) {
+  return (
+    args.reviewer !== null &&
+    normalizeAgent(args.reviewer) !== (state.roles?.reviewer?.kind ?? null)
   );
 }
 

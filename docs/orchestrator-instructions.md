@@ -100,8 +100,9 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `--task` only when its value differs from the stored task.
   Repeating any other init flag with its current value is accepted; changing
   one is rejected, so omit changed flags and never invent new values. The one
-  exceptions are the step budget, which only `role extend` changes, and the model of a role with no
-  completed turn, which only `role set-model` changes (see below).
+  exceptions are the step budget, which only `role extend` changes, and the model or reviewer CLI,
+  which only `role set-model` changes: a model of a role with no completed turn, and the model or
+  CLI after a reviewer envelope carries `"refusal": "provider-safety"` (see below).
 
 ## Dispatch
 
@@ -168,12 +169,14 @@ Example reviewer envelope:
   and gave no review result. An envelope with this field carries no `transient` field.
   - Do not resend the same prompt.
   - Ask the maintainer whether to resend a reworded prompt that limits the review method
-    (read code, run existing tests, build no new probe inputs), switch the reviewer model, or abort.
-  - When the latest reviewer turn is this refusal, with or without an earlier `ok` turn, switch
-    the reviewer model with
-    `role set-model --reviewer-model <model> --parent-session <id>`. A successful model change
-    starts a new session with the init task, and the worker session, the step count, and the turn
-    history stay.
+    (read code, run existing tests, build no new probe inputs), switch the reviewer model or CLI,
+    or abort.
+  - When the latest reviewer envelope carries `"refusal": "provider-safety"`, with or without an
+    earlier `ok` turn, switch the reviewer model or CLI with
+    `role set-model --reviewer-model <model> --parent-session <id>` or
+    `role set-model --reviewer <cli> --reviewer-model <model> [--reviewer-effort <level>] --parent-session <id>`.
+    A successful change starts a new session with the init task, and the worker session, the step
+    count, and the turn history stay.
 - A reviewer envelope carries `verdict`: `accept`, `reject`, or `unknown` when
   the required `Verdict:` line is missing or malformed. Treat `unknown` as not
   accepted. Process success never implies acceptance.
