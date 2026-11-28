@@ -6,6 +6,7 @@ import { executeRoleCommand, parseRoleArgs } from "../../src/role/index.mjs";
 import {
   cleanup,
   dispatchArgv,
+  finishCall,
   initRun,
   newCleanRunRepo,
   readRepoState,
@@ -330,6 +331,45 @@ test("set-model accepts a reviewer whose latest turn is a provider-safety refusa
   expect(seen.at(-1).prompt).toContain("Init task:\nFix the flaky test.");
 });
 
+// Usefulness: verifies the first-refusal case of #2065 — a reviewer whose only turn is a
+// provider-safety refusal that kept a session id starts a new session on the next dispatch, with
+// the new model and the init task, so no refused thread is resumed.
+test("set-model starts a new reviewer session after a first provider-safety refusal that kept an id", async () => {
+  const seen = [];
+  const reviewer = recordingAdapter([]);
+  reviewer.run = async (state, prompt) => {
+    seen.push({ model: state.model, incomingSessionId: state.sessionId, prompt });
+    if (seen.length === 1) {
+      state.sessionId = "sess-refused";
+      throw providerSafetyRefusal();
+    }
+    return `${REPORT}\nVerdict: accept`;
+  };
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+  const { repo } = await startRun({ initFlags: ["--reviewer-model", "gpt-6.1"], agents });
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(1);
+  const before = await readRepoState(repo);
+  expect(
+    before.turns.filter((turn) => turn.role === "reviewer").map((turn) => turn.status),
+  ).toEqual(["error"]);
+  expect(before.turns.find((turn) => turn.role === "reviewer").refusal).toBe("provider-safety");
+  expect(before.roles.reviewer.sessionId).toBe("sess-refused");
+
+  const changed = await setModel(repo, "--reviewer-model", "gpt-6.1-sol");
+  expect(changed.exitCode).toBe(0);
+  expect((await readRepoState(repo)).roles.reviewer).toMatchObject({
+    model: "gpt-6.1-sol",
+    sessionId: null,
+  });
+  expect((await readRepoState(repo)).modelChanges).toEqual([
+    { role: "reviewer", from: "gpt-6.1", to: "gpt-6.1-sol", at: expect.any(String) },
+  ]);
+
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(0);
+  expect(seen.at(-1)).toMatchObject({ model: "gpt-6.1-sol", incomingSessionId: null });
+  expect(seen.at(-1).prompt).toContain("Init task:\nFix the flaky test.");
+});
+
 // Usefulness: verifies a reviewer with an ok turn and no provider-safety refusal stays refused, so
 // the exception cannot split an ordinary conversation across two models.
 test("set-model refuses a reviewer with an ok turn and no provider-safety refusal", async () => {
@@ -365,6 +405,49 @@ test("set-model refuses a reviewer whose provider-safety refusal a later ok turn
   const refused = await setModel(repo, "--reviewer-model", "gpt-6.1-sol");
   expect(refused.exitCode).toBe(1);
   expect(refused.payload.error).toContain("completed a turn");
+  expect(await readRepoState(repo)).toEqual(before);
+});
+
+// Usefulness: verifies only the latest turn decides the exception, so a model refusal after an
+// earlier provider-safety refusal refuses the change and no refused thread is dropped by mistake.
+test("set-model refuses a reviewer whose provider-safety refusal a later model refusal followed", async () => {
+  let call = 0;
+  const reviewer = recordingAdapter([]);
+  reviewer.run = async (state) => {
+    call += 1;
+    if (state.sessionId === null) state.sessionId = "sess-1";
+    if (call === 2) throw providerSafetyRefusal();
+    if (call === 3) {
+      throw Object.assign(new Error(REFUSED), { refusedModel: "gpt-6.1" });
+    }
+    return `${REPORT}\nVerdict: accept`;
+  };
+  const agents = { fake1: recordingAdapter([]), fake2: reviewer };
+  const { repo } = await startRun({ initFlags: ["--reviewer-model", "gpt-6.1"], agents });
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(0);
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(1);
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(1);
+  const before = await readRepoState(repo);
+  expect(before.turns.at(-1)).toMatchObject({ role: "reviewer", status: "error" });
+  expect(before.turns.at(-1).refusal).toBeUndefined();
+  expect(before.roles.reviewer.sessionId).toBe("sess-1");
+
+  const refused = await setModel(repo, "--reviewer-model", "gpt-6.1-sol");
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("completed a turn");
+  expect(await readRepoState(repo)).toEqual(before);
+});
+
+// Usefulness: verifies a finished run refuses the change, so a terminal run takes no model change.
+test("set-model refuses a finished run", async () => {
+  const { repo } = await startRun({ initFlags: ["--reviewer-model", "gpt-6.1"] });
+  expect((await finishCall(repo)).exitCode).toBe(0);
+  const before = await readRepoState(repo);
+  expect(before.lifecycle).toBe("finished");
+
+  const refused = await setModel(repo, "--reviewer-model", "gpt-6.1-sol");
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toBe("Run is already finished.");
   expect(await readRepoState(repo)).toEqual(before);
 });
 

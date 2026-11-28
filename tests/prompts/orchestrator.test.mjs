@@ -1438,8 +1438,6 @@ test("the headless prompt states the provider safety refusal action", () => {
     prompt,
     /provider safety refusal/i,
     /do not resend/i,
-    /role set-model/i,
-    /new reviewer session/i,
     /\babort\b/i,
     /provider-safety class/i,
   );

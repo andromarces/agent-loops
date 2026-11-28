@@ -311,9 +311,10 @@ async function refreshLocal(args, { signal } = {}) {
  * `--<role>-model` flag the call carries, and exactly one is required. Only an `active` run takes
  * it: a `dispatched` or `interrupted` run can still have a child on the old model. A role with an
  * `ok` turn is refused, because its conversation already ran on the old model.
- * The reviewer is the one exception: when its latest turn is a `provider-safety` refusal, a
- * changed model clears its session id, so the next reviewer turn starts a new session with the
- * init task again. The worker session, the step count, and the turn history stay.
+ * The reviewer is the one exception: when its latest turn is a `provider-safety` refusal, with or
+ * without an earlier `ok` turn, a changed model clears its session id, so the next reviewer turn
+ * starts a new session with the init task again. The worker session, the step count, and the turn
+ * history stay.
  */
 async function setModel(args) {
   rejectMisplacedFlags(args, "set-model");
@@ -341,13 +342,13 @@ async function setModel(args) {
         ? state.turns.filter((turn) => turn.role === roleName)
         : null;
       const latestTurn = roleTurns?.at(-1);
-      // A reviewer takes the change after a provider-safety refusal even with an `ok` turn, because
-      // the new session starts empty. Only the latest turn counts: a later `ok` turn closes the
+      // A reviewer takes the change after a provider-safety refusal, with or without an earlier
+      // `ok` turn, because the new session starts empty. A first Codex refusal can keep a thread
+      // id, so that id must not be resumed. Only the latest turn counts: a later turn closes the
       // exception.
       const afterProviderSafetyRefusal =
         roleName === "reviewer" &&
         roleTurns !== null &&
-        roleTurns.some((turn) => turn.status === "ok") &&
         latestTurn?.status === "error" &&
         latestTurn.refusal === "provider-safety";
       if (

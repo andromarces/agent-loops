@@ -175,7 +175,8 @@ Role operations:
                                 changed. Refuses a terminal run and a child role.
   set-model                     Replace the model of one role that has completed no
                                 ok turn, or of the reviewer whose latest turn is a
-                                provider-safety refusal, on an active run, with
+                                provider-safety refusal (with or without an earlier ok
+                                turn), on an active run, with
                                 --worker-model or --reviewer-model (exactly one), so a
                                 model that the CLI refused is repaired without a new
                                 run. A first Codex turn that a recognized model refusal

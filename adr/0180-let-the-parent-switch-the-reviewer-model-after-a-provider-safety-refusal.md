@@ -11,8 +11,9 @@ This ADR partially supersedes
 The replaced parts are decision 3's no-`ok`-entry precondition, decision 5's rule that the stored
 session id stays, alternative 2's rejection of a change for a role with an `ok` turn, and the
 consequence that a model a CLI accepts and later rejects after an `ok` turn is not covered. Each
-replaced part applies only to the reviewer whose latest turn is a `provider-safety` refusal, as
-this ADR states. Every other decision, consequence, and alternative of ADR 0070 stays in force.
+replaced part applies only to the reviewer whose latest turn is a `provider-safety` refusal, with
+or without an earlier `ok` turn, as this ADR states. Every other decision, consequence, and
+alternative of ADR 0070 stays in force.
 
 This ADR also partially supersedes
 [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md).
@@ -36,21 +37,27 @@ recur the parent has no way to move that reviewer to another model on the same r
 path is `abort` and a new run, which loses the worker conversation too
 ([issue #2065](https://github.com/andromarces/agent-loops/issues/2065)).
 
+The same refusal can end the first reviewer turn. ADR 0070 keeps a session id that such a turn
+reports, so the next turn would resume the refused thread and would not receive the init task.
+The refusal therefore needs a new session on that path too, not only after an `ok` turn.
+
 ## Decision
 
 1. **One exception, for the reviewer only.** `role set-model --reviewer-model` accepts a reviewer
-   that has an `ok` turn only when the latest entry for that role in `turns` is a failed turn
-   whose `refusal` is `"provider-safety"`. Every other role and turn keeps ADR 0070's no-`ok`
-   precondition.
+   whenever the latest entry for that role in `turns` is a failed turn whose `refusal` is
+   `"provider-safety"`, with or without an earlier `ok` turn. Every other role and turn keeps
+   ADR 0070's no-`ok` precondition.
 2. **Persist the class in the turn entry.** A failed turn records its provider `refusal` class in
    its `turns` entry. The exception therefore reads stored state and never the error text. A state
    file written before the field exists refuses the exception, as it refuses a role with no turn
    history.
 3. **Start a new reviewer session.** On that path the call clears the reviewer `sessionId`, its
-   `sessionUnconfirmed` mark, and its `conversationReplaced` mark. The next reviewer dispatch then
-   starts a new conversation and shows the init task again through the `taskSentTo` rule in
+   `sessionUnconfirmed` mark, and its `conversationReplaced` mark, whether or not the reviewer has
+   an earlier `ok` turn. The next reviewer dispatch then starts a new conversation and shows the
+   init task again through the `taskSentTo` rule in
    [Init task delivery](../docs/orchestrator/task-delivery.md). The worker session, the step count,
-   and the turn history stay. The no-`ok`-turn path keeps its session id unchanged.
+   and the turn history stay. A no-`ok` turn that failed for another cause, such as a model
+   refusal, keeps its session id unchanged.
 4. **Record the change as before.** The replacement is appended to `modelChanges` as
    `{role, from, to, at}`. No field is added: the cleared session id and the next new-session turn
    show that the reviewer restarted.
@@ -65,30 +72,33 @@ path is `abort` and a new run, which loses the worker conversation too
 ## Consequences
 
 - A reviewer that keeps a provider-safety refusal can move to another model on the same run, and
-  the worker keeps its conversation.
+  the worker keeps its conversation. This holds on a first refusal too, where a kept thread id is
+  discarded instead of resumed.
 - The old reviewer conversation is discarded. Its unreviewed history is lost by design, because a
   refusal that a model change answers cannot continue that conversation.
 - A provider refusal that an adapter does not mark with `refusal: "provider-safety"` is not
   covered and keeps the ADR 0070 refusal.
 - The turn history gains one optional field, so a state file without it stays valid and its failed
   turns carry no refusal class.
-- The orchestrator instructions name the switch beside the provider-safety parent action, so a
-  parent can act without inventing an operation.
+- The interactive orchestrator instructions name the switch beside the provider-safety parent
+  action, so a parent can act without inventing an operation. The headless prompt keeps its abort
+  action, because a headless run holds no role state and ADR 0148 keeps that operation out.
 
 ## Alternatives
 
 1. **Switch the reviewer CLI instead of its model.** Not taken. `--reviewer` is an init field, and a
    CLI switch changes more state than this repair needs.
-2. **Keep the reviewer session and change its model.** Not taken. The conversation already ran on
-   the refused model, and one session would span two models, against ADR 0070's reason for the
-   `ok`-turn guard.
+2. **Keep the reviewer session and change its model.** Not taken, with or without an earlier `ok`
+   turn. The conversation already ran on the refused model, and one session would span two models,
+   against ADR 0070's reason for the `ok`-turn guard.
 3. **Accept any later failed turn, not only a provider-safety refusal.** Not taken. Another failure
    can be transient or can leave a session worth resuming, and the narrower class has a stored
    marker.
 4. **Add a session-reset field to `modelChanges`.** Not taken. The cleared session id and the next
    new-session turn already show the restart, so the entry keeps its shape.
-5. **Reset the reviewer session on the no-`ok`-turn path too.** Not taken. That path keeps the
-   current behavior, and a CLI that kept a usable id resumes it on the new model.
+5. **Reset the reviewer session on every no-`ok`-turn failure.** Not taken. A model refusal or
+   another failure can leave a usable id, and the CLI resumes it on the new model. Only the
+   provider-safety class clears the session.
 
 ## Authors
 
