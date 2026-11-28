@@ -77,7 +77,8 @@ The refusal therefore needs a new session on that path too, not only after an `o
 - The old reviewer conversation is discarded. Its unreviewed history is lost by design, because a
   refusal that a model change answers cannot continue that conversation.
 - A provider refusal that an adapter does not mark with `refusal: "provider-safety"` is not
-  covered and keeps the ADR 0070 refusal.
+  covered by this ADR, and the ADR 0070 rule applies: a role with an `ok` turn is refused, and a
+  role with no `ok` turn takes the change and keeps its session id.
 - The turn history gains one optional field, so a state file without it stays valid and its failed
   turns carry no refusal class.
 - The interactive orchestrator instructions name the switch beside the provider-safety parent
