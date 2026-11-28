@@ -157,7 +157,7 @@ export async function runCodex(state, prompt, options = {}) {
   let stdout;
   try {
     // The CLI creates two empty `.tmp*` directories in its temporary directory on every turn, so it
-    // gets a private one that the runtime removes, or the one its environment names when creation
+    // gets a private one that the runtime removes, or its usual temporary directory when creation
     // fails.
     ({ stdout } = await withTurnTmpdir(
       // A command of the turn can leave the group of the child. A parent signal walks the child's
