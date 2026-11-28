@@ -798,7 +798,7 @@ test("opencode plugin prompt is the instruction sentences joined by blank lines"
     "Read `docs/orchestrator-instructions.md` and follow it for this request.\n\n" +
       "The task and role settings are:\n\n" +
       "Line one.\r\nLine two.\n\n" +
-      "This OpenCode session id is `ses_opencode_parent`. Pass it as `--parent-session` on the init dispatch call.",
+      "This OpenCode session id is `ses_opencode_parent`. Pass it as `--parent-session` on the `role` init dispatch call. A batch request runs one `batch start` command, which takes no `--parent-session`; pass no session id there.",
   );
 });
 
@@ -808,7 +808,7 @@ test("opencode plugin prompt keeps quotes in the task unchanged", async () => {
   expect(await opencodePromptText(task)).toBe(
     "Read `docs/orchestrator-instructions.md` and follow it for this request.\n\n" +
       `The task and role settings are:\n\n${task}\n\n` +
-      "This OpenCode session id is `ses_opencode_parent`. Pass it as `--parent-session` on the init dispatch call.",
+      "This OpenCode session id is `ses_opencode_parent`. Pass it as `--parent-session` on the `role` init dispatch call. A batch request runs one `batch start` command, which takes no `--parent-session`; pass no session id there.",
   );
 });
 
@@ -818,6 +818,6 @@ test("opencode plugin prompt keeps an empty task as an empty paragraph", async (
   expect(await opencodePromptText("")).toBe(
     "Read `docs/orchestrator-instructions.md` and follow it for this request.\n\n" +
       "The task and role settings are:\n\n\n\n" +
-      "This OpenCode session id is `ses_opencode_parent`. Pass it as `--parent-session` on the init dispatch call.",
+      "This OpenCode session id is `ses_opencode_parent`. Pass it as `--parent-session` on the `role` init dispatch call. A batch request runs one `batch start` command, which takes no `--parent-session`; pass no session id there.",
   );
 });
