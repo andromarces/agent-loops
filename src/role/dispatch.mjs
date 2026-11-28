@@ -687,9 +687,10 @@ export async function recordUncertainTurn(state, fallbackRole = "worker") {
 /**
  * Appends one turn entry to `turns`, which survives every later overwrite of
  * `lastDispatch` and `lastResult`. The entry records the turn's identity, not
- * its text: `role`, `status`, `verdict`, the reviewed `head`, and `at`. Report
- * and response text stay out of it, so the state file cannot grow with the text
- * a child returns.
+ * its text: `role`, `status`, `verdict`, the reviewed `head`, `at`, and a
+ * provider `refusal` class when the turn failed with one. Report and response
+ * text stay out of it, so the state file cannot grow with the text a child
+ * returns.
  *
  * Exactly one entry exists per dispatched turn. A first turn that a recognized model refusal ends
  * charges no step but still records one, so a later refusal charges a step. An entry
@@ -708,6 +709,9 @@ function recordTurn(state, roleName, result, at) {
     // `status` is `ok`, `error`, or `interrupted`.
     // `interrupted` marks a charged turn whose outcome is unknown, so it carries no verdict and no reviewed head.
     status: result.status,
+    // A failed turn keeps the provider refusal class, so a later call can tell a provider-safety
+    // refusal from another failure without reading response or error text.
+    ...(typeof result.refusal === "string" ? { refusal: result.refusal } : {}),
     // Only a reviewer turn carries a verdict; the word never comes from a
     // worker response.
     verdict: ok && roleName === "reviewer" ? parseVerdict(result.response) : null,

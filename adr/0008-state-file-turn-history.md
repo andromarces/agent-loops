@@ -10,7 +10,9 @@ Partially superseded by [ADR 0084: Charge no step for a first Codex turn that a 
 - Decision 5's size bound that `turns` holds at most `maxSteps` entries. Superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md): the array holds at most `maxSteps` entries plus one refunded first-turn refusal for each role.
 - The consequence that the state file grows by one entry per turn, bounded by `maxSteps`. Superseded by [ADR 0084](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md).
 
-The entry shape, the status values, the append points, the recovery entry, decision 5's recovery accounting and no-truncation rule, decisions 3, 4, 6 to 10, and every other consequence stay in force.
+Partially superseded by [ADR 0180: Let the parent switch the reviewer model after a provider-safety refusal](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md). The superseded part is decision 1's entry shape, which gains the provider `refusal` class on a failed turn.
+
+The rest of the entry shape, the status values, the append points, the recovery entry, decision 5's recovery accounting and no-truncation rule, decisions 3, 4, 6 to 10, and every other consequence stay in force.
 
 ## Date
 
@@ -37,7 +39,9 @@ following the instructions records nothing.
    state file, whether or not `--transcript` was passed. The entry holds the
    turn's identity, not its text: `role`, `status`, `verdict` (the parsed
    reviewer verdict, `null` for every other turn), `head` (the head a reviewer
-   turn reviewed, `null` otherwise), and `at`.
+   turn reviewed, `null` otherwise), and `at`. Superseded in part by
+   [ADR 0180](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md):
+   a failed turn also holds the provider `refusal` class when it has one.
 2. Exactly one entry exists per charged step. `status` is `ok`, `error`, or
    `interrupted`. An entry is appended when a dispatch records its result, when
    a child fails, and when the recovery call records the turn a crash left in

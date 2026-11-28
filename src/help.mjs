@@ -174,12 +174,15 @@ Role operations:
                                 a missing or linked side, and a copy that a turn
                                 changed. Refuses a terminal run and a child role.
   set-model                     Replace the model of one role that has completed no
-                                turn, on an active run, with --worker-model or
-                                --reviewer-model (exactly one), so a model that the CLI
-                                refused is repaired without a new run. A first Codex
-                                turn that a recognized model refusal ends charges no
-                                step. Needs the stored --parent-session id. Refuses a
-                                role with an ok turn.
+                                ok turn, or of the reviewer whose latest turn is a
+                                provider-safety refusal, on an active run, with
+                                --worker-model or --reviewer-model (exactly one), so a
+                                model that the CLI refused is repaired without a new
+                                run. A first Codex turn that a recognized model refusal
+                                ends charges no step. On the provider-safety path the
+                                reviewer starts a new session with the init task. Needs
+                                the stored --parent-session id. Refuses a role with an
+                                ok turn otherwise.
   wait-checks                   Wait for the required checks on --pr to settle, inside
                                 --timeout seconds, and print their states with a
                                 timedOut flag. The bound starts at command entry
