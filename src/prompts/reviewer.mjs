@@ -129,7 +129,8 @@ const remoteWriteRule = `Do not write to GitHub or any remote. ${REMOTE_WRITE_AC
 // repository comes first, and the turn removes that output too, because no runtime step does.
 // The runtime creates and removes one scratch folder per turn, so that folder comes first when
 // the turn has one; the other sentences cover output outside it. A Codex turn also gets a private
-// temporary directory that the runtime removes (ADR 0047), so the rule builds a temporary path
+// temporary directory that the runtime removes, or the inherited directory when its creation fails
+// (ADR 0047), so the rule builds a temporary path
 // from TMPDIR, TEMP, or TMP when one is set, and bars a literal path to the inherited directory,
 // which that removal does not cover. A reviewer that is not Codex may have none of them set, so
 // the rule keeps the platform directory as the fallback. The runtime reports an entry that still
