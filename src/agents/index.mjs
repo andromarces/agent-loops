@@ -51,7 +51,7 @@ export const defaultAgents = {
 
 export const supportedAgents = new Set([...Object.keys(defaultAgents), ...AGENT_ALIASES.keys()]);
 
-/** Runs one turn on the adapter of `state.kind`, in a private temporary directory when the adapter asks for one and the runtime creates it, else in the inherited one (ADR 0068). Throws an error with `isCanceled` when `options.signal` is aborted by the time the adapter returns. */
+/** Runs one turn on the adapter of `state.kind`, in a private temporary directory when the adapter asks for one and the runtime creates it. Throws an error with `isCanceled` when `options.signal` is aborted by the time the adapter returns. */
 export async function runAgent(state, prompt, options = {}, agents = defaultAgents) {
   const kind = normalizeAgent(state.kind);
   const adapter = agents[kind];
