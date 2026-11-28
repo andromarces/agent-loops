@@ -46,6 +46,26 @@ export function storedReviewerSandbox(state) {
 }
 
 /**
+ * The reviewer sandbox mode that the state records, or null when it records no field. Unlike
+ * storedReviewerSandbox, this reads the fields for every reviewer kind, so a CLI switch can tell a
+ * stored option from an absent one. A legacy `reviewerWorkspaceWrite` field maps to its recorded
+ * mode.
+ * @throws {RoleError} when a present field is not one of the three modes
+ */
+export function heldReviewerSandbox(state) {
+  if (state.reviewerSandbox === undefined && state.reviewerWorkspaceWrite === undefined) {
+    return null;
+  }
+  const mode = recordedReviewerSandbox(state.reviewerSandbox, state.reviewerWorkspaceWrite);
+  if (mode === null) {
+    throw new RoleError(
+      `State file field reviewerSandbox must be one of ${REVIEWER_SANDBOX_MODES.join(", ")}, got: ${JSON.stringify(state.reviewerSandbox)}.`,
+    );
+  }
+  return mode;
+}
+
+/**
  * The `--copy-local-path` values of `args` as sorted, unique, root-relative paths.
  * @throws {RoleError} for a path that `normalizeLocalPath` refuses
  */

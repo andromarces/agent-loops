@@ -5,7 +5,12 @@
 // envelope per invocation, except `--help`, which prints plain usage. All logs go
 // to stderr.
 import { defaultAgents, normalizeAgent, supportedAgents } from "../agents/index.mjs";
-import { CHILD_ROLE_KINDS, openCodeOptionsError } from "../lib/args.mjs";
+import {
+  CHILD_ROLE_KINDS,
+  agentOptionsError,
+  openCodeOptionsError,
+  reviewerSandboxError,
+} from "../lib/args.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/checks/check-wait.mjs";
 import { isSpawnedByRun } from "../lib/exec.mjs";
@@ -28,9 +33,11 @@ import { withTimeBound } from "../lib/time-bound.mjs";
 import { cancelOnSigInt } from "../lib/sigint.mjs";
 import { recheckKeptTurnTmpdir } from "../lib/turn-tmpdir.mjs";
 import {
+  heldReviewerSandbox,
   parseRoleArgsWithOperations,
   rejectInitFlagChanges,
   rejectMisplacedFlags,
+  storedReviewerSandbox,
 } from "./args.mjs";
 import { dispatch, recordUncertainTurn } from "./dispatch.mjs";
 import { RoleError, printEnvelope, errorResult, writeAllSync } from "./envelope.mjs";
@@ -376,18 +383,37 @@ async function setModel(args, { agents = {} } = {}) {
         );
       }
       const nextKind = cliChanged ? requestedReviewerKind : role.kind;
+      const previousKind = role.kind;
       // A CLI switch replaces the role's model and effort together, so an omitted effort clears it.
       const nextEffort = cliChanged ? args.reviewerEffort : role.effort;
-      if (cliChanged && !supportedAgents.has(nextKind) && !agents?.[nextKind]) {
+      if (cliChanged && !supportedAgents.has(nextKind) && !Object.hasOwn(agents ?? {}, nextKind)) {
         throw new RoleError(`Unsupported reviewer CLI: ${args.reviewer}.`);
       }
-      // Validate the pair for the CLI that the next turn runs, not the CLI that the refused turn ran.
-      const refusal = openCodeOptionsError(roleName, nextKind, model, nextEffort);
+      if (cliChanged) {
+        // A stored Codex sandbox is a CLI-specific containment. A target that does not support it
+        // must not drop it, and a target that does support it keeps its recorded mode. A run with
+        // no stored sandbox and a target other than Codex carries no option to compare.
+        const heldSandbox =
+          previousKind === "codex" ? storedReviewerSandbox(state) : heldReviewerSandbox(state);
+        if (heldSandbox !== null && nextKind !== "codex") {
+          const sandboxRefusal = reviewerSandboxError(
+            heldSandbox === "none" ? null : heldSandbox,
+            nextKind,
+          );
+          if (sandboxRefusal) {
+            throw new RoleError(sandboxRefusal);
+          }
+        }
+      }
+      // Validate for the CLI that the next turn runs, not the CLI that the refused turn ran. A
+      // model-only call keeps the init validation and its exact main behavior.
+      const refusal = cliChanged
+        ? agentOptionsError(roleName, nextKind, model, nextEffort)
+        : openCodeOptionsError(roleName, nextKind, model, nextEffort);
       if (refusal) {
         throw new RoleError(refusal);
       }
       const previousModel = role.model ?? null;
-      const previousKind = role.kind;
       const modelChanged = model !== previousModel;
       if (!modelChanged && !cliChanged) {
         // Idempotent success: no change happened, so no history entry and no state write.
@@ -414,6 +440,12 @@ async function setModel(args, { agents = {} } = {}) {
           state.cliChanges = [];
         }
         state.cliChanges.push({ role: roleName, from: previousKind, to: nextKind, at });
+      }
+      // The new reviewer kind does not take the Codex sandbox option. A contained mode was refused
+      // above, so only a `none` mode or an absent field remains.
+      if (cliChanged && nextKind !== "codex") {
+        delete state.reviewerSandbox;
+        delete state.reviewerWorkspaceWrite;
       }
       // The role keeps its stored session id, which is `null` or unconfirmed after a refused first
       // turn. A successful change on the provider-safety path starts a new session, so the old id,

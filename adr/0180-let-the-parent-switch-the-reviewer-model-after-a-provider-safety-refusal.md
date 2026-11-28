@@ -4,7 +4,7 @@
 
 partially-superseded
 
-Superseded by [ADR 0183: Let the parent switch the reviewer CLI after a provider-safety refusal](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md). The superseded part is decision 6's rule that `--reviewer` cannot change after init and that only the model moves, the consequence that names only another model, the consequence that names only the model switch in the orchestrator instructions, and alternative 1's rejection of a CLI switch because `--reviewer` is an init field. Each replaced part applies only to the reviewer whose latest turn is a `provider-safety` refusal. Every other part stays in force: the exception itself, the new-session rule, the recorded `modelChanges` entry, the guard list, and every other consequence and alternative.
+Superseded by [ADR 0183: Let the parent switch the reviewer CLI after a provider-safety refusal](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md). The superseded part is decision 6's rule that `--reviewer` cannot change after init and that only the model moves, the consequence that names only another model, the consequence that names only the model switch in the orchestrator instructions, alternative 1's rejection of a CLI switch because `--reviewer` is an init field, and alternative 5's rule that only a model change clears the session. Each replaced part applies only to the reviewer whose latest turn is a `provider-safety` refusal. Every other part stays in force: the exception itself, the new-session rule, the recorded `modelChanges` entry, the guard list, and every other consequence and alternative.
 
 ## Supersedes
 
@@ -111,6 +111,10 @@ The refusal therefore needs a new session on that path too, not only after an `o
 5. **Reset the reviewer session on every no-`ok`-turn failure.** Not taken. A model refusal or
    another failure can leave a usable id, and the CLI resumes it on the new model. Only a
    successful model change whose latest turn is the provider-safety class clears the session.
+   Superseded in part by
+   [ADR 0183](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md): a
+   successful CLI change on that path clears the session too. The rest of this alternative stays
+   in force.
 
 ## Authors
 

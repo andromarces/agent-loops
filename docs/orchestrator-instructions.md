@@ -100,8 +100,9 @@ printf '%s' "<first child prompt>" | agent-loop role dispatch \
   `--task` only when its value differs from the stored task.
   Repeating any other init flag with its current value is accepted; changing
   one is rejected, so omit changed flags and never invent new values. The one
-  exceptions are the step budget, which only `role extend` changes, and the model or reviewer CLI of
-  a role with no completed turn, which only `role set-model` changes (see below).
+  exceptions are the step budget, which only `role extend` changes, and the model or reviewer CLI,
+  which only `role set-model` changes: a model of a role with no completed turn, and the model or
+  CLI after a reviewer envelope carries `"refusal": "provider-safety"` (see below).
 
 ## Dispatch
 

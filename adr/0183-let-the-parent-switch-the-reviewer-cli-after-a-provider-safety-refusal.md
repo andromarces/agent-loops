@@ -10,8 +10,9 @@ This ADR partially supersedes
 [ADR 0180: Let the parent switch the reviewer model after a provider-safety refusal](0180-let-the-parent-switch-the-reviewer-model-after-a-provider-safety-refusal.md).
 The replaced parts are decision 6's rule that `--reviewer` cannot change after init and that only
 the model moves on this path, the consequence that names only another model, the consequence that
-names only the model switch in the orchestrator instructions, and alternative 1's rejection of a
-CLI switch because `--reviewer` is an init field. Each replaced part applies only to the reviewer
+names only the model switch in the orchestrator instructions, alternative 1's rejection of a CLI
+switch because `--reviewer` is an init field, and alternative 5's rule that only a model change
+clears the session. Each replaced part applies only to the reviewer
 whose latest turn is a `provider-safety` refusal. Every other decision, consequence, and
 alternative of ADR 0180 stays in force.
 
@@ -39,24 +40,29 @@ CLI switch loses no review work.
    is still required, so a CLI switch always names the model that the new CLI runs, and an omitted
    effort clears the role's effort. The option is accepted only when the latest reviewer turn is a
    `provider-safety` refusal, with or without an earlier `ok` turn.
-2. **Validate for the new CLI.** The new code path refuses an unknown or unsupported CLI and a
-   model or effort that the new CLI refuses, using the `supportedAgents` check and the OpenCode
-   pair rule of init. A model-only call keeps the init check and the current role's CLI.
+2. **Validate for the new CLI.** The new code path refuses an unknown or unsupported CLI, a model
+   or effort value outside the target CLI's declared model pattern and effort set, and an OpenCode
+   model and effort pair that init refuses. It also reuses the init reviewer sandbox check: a stored
+   `read-only` or `workspace-write` sandbox refuses a target other than Codex, and the refusal
+   names `--reviewer-sandbox`, because the new CLI would drop that containment. A stored `none`
+   sandbox holds no containment and is cleared on the switch, so no stored Codex option remains for
+   the new CLI. A model-only call keeps the init check and the current role's CLI.
 3. **Start a new reviewer session.** A successful CLI switch clears the reviewer `sessionId`, its
    `sessionUnconfirmed` mark, and its `conversationReplaced` mark, whether or not the model also
    changed. The next reviewer dispatch runs the new CLI in a new conversation and shows the init
    task again through the `taskSentTo` rule. The worker session, the step count, and the turn
    history stay.
 4. **Record the CLI change.** A CLI change is appended to `cliChanges` as `{role, from, to, at}`,
-   beside the existing `modelChanges` entry for a model change. The envelope adds `kind` and
-   `previousKind` when the CLI changes. A model-only change keeps the ADR 0180 envelope and
-   `modelChanges` shape.
+   beside the existing `modelChanges` entry for a model change, even when the model string stays
+   the same. The envelope adds `kind` and `previousKind` when the CLI changes. A model-only change
+   keeps the ADR 0180 envelope and `modelChanges` shape.
 5. **Keep every other guard.** Exactly one model flag is required; the run is `active`; the caller
    passes the stored `--parent-session` id; a child role is refused through the
    `AGENT_LOOP_SPAWNED_RUN` marker; the role is configured; a run with no turn history is refused;
    the latest reviewer turn must be the refusal; and a request that names the current CLI and model
    succeeds with no history entry and no state write. A `--reviewer` value that names the stored
-   CLI changes nothing and follows the model-only path.
+   CLI follows the model-only path exactly: it writes no `cliChanges` entry, clears no session,
+   and writes no state when nothing changes.
 6. **The worker and the run stay.** Only the reviewer role changes. The worker session, the step
    count, and the turn history are unchanged.
 
@@ -66,6 +72,9 @@ CLI switch loses no review work.
   model and effort, on the same run, and the worker keeps its conversation.
 - The old reviewer conversation is discarded. Its unreviewed history is lost by design, as ADR 0180
   states for the model switch.
+- A switch to a CLI other than Codex is refused while the run holds a `read-only` or
+  `workspace-write` Codex sandbox, so a containment mode is never dropped silently. A `none`
+  mode is cleared, so no stored Codex sandbox option remains for the new CLI.
 - A switch to Codex reads the stored reviewer sandbox mode. A run that started with another
   reviewer holds no `reviewerSandbox` field, so its Codex turn reads the legacy `read-only`
   mode (ADR 0038).

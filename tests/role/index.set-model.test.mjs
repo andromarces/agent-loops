@@ -559,7 +559,7 @@ test("set-model refuses an unknown or unsupported reviewer CLI", async () => {
   const { repo } = await startSafetyRefusedReviewerRun();
   const before = await readRepoState(repo);
 
-  for (const kind of ["nope", "fake9"]) {
+  for (const kind of ["nope", "fake9", "constructor"]) {
     const refused = await setModel(repo, "--reviewer", kind, "--reviewer-model", "gpt-6.1-sol");
     expect(refused.exitCode, kind).toBe(1);
     expect(refused.payload.error, kind).toContain("Unsupported reviewer CLI");
@@ -659,4 +659,126 @@ test("set-model switches the reviewer CLI and the next dispatch starts a new ses
   expect(newCliCalls[0]).toMatchObject({ kind: "fake3", incomingSessionId: null });
   expect(newCliCalls[0].prompt).toContain("Init task:\nFix the flaky test.");
   expect(oldCalls).toBe(1);
+});
+
+// Usefulness: verifies a CLI switch cannot drop a stored Codex reviewer sandbox on a CLI that does
+// not support it, and names the option in the refusal.
+test("set-model refuses a CLI switch that would drop a stored reviewer sandbox", async () => {
+  const reviewer = {
+    async run() {
+      throw providerSafetyRefusal();
+    },
+  };
+  const agents = { fake1: recordingAdapter([]), codex: reviewer };
+  const { repo } = await startRun({
+    initFlags: [
+      "--reviewer",
+      "codex",
+      "--reviewer-model",
+      "gpt-6.1",
+      "--reviewer-sandbox",
+      "read-only",
+    ],
+    agents,
+  });
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(1);
+  const before = await readRepoState(repo);
+  expect(before.roles.reviewer).toMatchObject({ kind: "codex" });
+  expect(before.reviewerSandbox).toBe("read-only");
+
+  const refused = await setModelOn(
+    repo,
+    agents,
+    "--reviewer",
+    "opencode",
+    "--reviewer-model",
+    "p/m",
+    "--reviewer-effort",
+    "high",
+  );
+  expect(refused.exitCode).toBe(1);
+  expect(refused.payload.error).toContain("--reviewer-sandbox");
+  expect(await readRepoState(repo)).toEqual(before);
+});
+
+// Usefulness: verifies a CLI switch validates the model and effort for the target CLI, not only
+// the OpenCode option pairing, and writes nothing when a value is invalid.
+test("set-model refuses a CLI change with an invalid model or effort for the target CLI", async () => {
+  const { repo } = await startSafetyRefusedReviewerRun();
+  const before = await readRepoState(repo);
+
+  const invalidModel = await setModel(repo, "--reviewer", "copilot", "--reviewer-model", "nope");
+  expect(invalidModel.exitCode).toBe(1);
+  expect(invalidModel.payload.error).toContain("--reviewer-model");
+  expect(await readRepoState(repo)).toEqual(before);
+
+  const invalidEffort = await setModel(
+    repo,
+    "--reviewer",
+    "copilot",
+    "--reviewer-model",
+    "gpt-5",
+    "--reviewer-effort",
+    "extreme",
+  );
+  expect(invalidEffort.exitCode).toBe(1);
+  expect(invalidEffort.payload.error).toContain("--reviewer-effort");
+  expect(await readRepoState(repo)).toEqual(before);
+});
+
+// Usefulness: verifies a --reviewer value that names the current CLI follows the model-only path,
+// so naming the current model writes no cliChanges and no state.
+test("set-model treats the current CLI as the model-only path without a state write", async () => {
+  const { repo } = await startSafetyRefusedReviewerRun();
+  const { stateFile } = statePaths({ cwd: repo });
+  const before = await readRepoState(repo);
+  const mtimeBefore = (await stat(stateFile)).mtimeMs;
+
+  const repeated = await setModel(repo, "--reviewer", "fake2", "--reviewer-model", "gpt-6.1");
+  expect(repeated.exitCode).toBe(0);
+  expect(repeated.payload).toEqual({
+    status: "ok",
+    lifecycle: "active",
+    role: "reviewer",
+    model: "gpt-6.1",
+    previousModel: "gpt-6.1",
+  });
+  expect(await readRepoState(repo)).toEqual(before);
+  expect((await stat(stateFile)).mtimeMs).toBe(mtimeBefore);
+  expect(before.cliChanges).toBeUndefined();
+});
+
+// Usefulness: verifies a default Codex run (sandbox none) can still switch CLI and the stored
+// sandbox option is cleared, so the next dispatch of the new CLI carries no unsupported option.
+test("set-model clears a none reviewer sandbox on a CLI switch", async () => {
+  const reviewer = {
+    async run() {
+      throw providerSafetyRefusal();
+    },
+  };
+  const agents = { fake1: recordingAdapter([]), codex: reviewer, fake3: recordingAdapter([]) };
+  const { repo } = await startRun({
+    initFlags: ["--reviewer", "codex", "--reviewer-model", "gpt-6.1"],
+    agents,
+  });
+  expect((await reviewerTurn(repo, agents)).exitCode).toBe(1);
+  expect((await readRepoState(repo)).reviewerSandbox).toBe("none");
+
+  const changed = await setModelOn(
+    repo,
+    agents,
+    "--reviewer",
+    "fake3",
+    "--reviewer-model",
+    "m",
+    "--reviewer-effort",
+    "high",
+  );
+  expect(changed.exitCode).toBe(0);
+  const after = await readRepoState(repo);
+  expect(after.roles.reviewer.kind).toBe("fake3");
+  expect(after.reviewerSandbox).toBeUndefined();
+  expect(after.cliChanges).toEqual([
+    { role: "reviewer", from: "codex", to: "fake3", at: expect.any(String) },
+  ]);
 });
