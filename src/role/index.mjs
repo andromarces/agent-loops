@@ -519,13 +519,16 @@ export async function main(argv, { agents = defaultAgents, gh } = {}) {
       settle();
     });
   };
+  // The budget that dispatch last saved under the lock, so a forced exit reports the persisted
+  // charge without a state read or a second envelope (ADR 0033).
+  const savedBudget = {};
   const removeSigIntListener = cancelOnSigInt(controller, {
     onForceExit: () => {
       // A write in flight finishes first, so the exit never cuts it.
       if (envelope.state === "writing") return envelope.done;
       if (envelope.state === "done") return undefined;
       envelope.state = "done";
-      const { payload } = errorResult({ isCanceled: true });
+      const { payload } = errorResult({ isCanceled: true, savedBudget });
       writeAllSync(1, `${JSON.stringify(payload)}\n`);
       return undefined;
     },
@@ -551,6 +554,7 @@ export async function main(argv, { agents = defaultAgents, gh } = {}) {
       agents,
       signal: controller.signal,
       gh,
+      savedBudget,
     });
 
     await emitEnvelope(payload, exitCode);

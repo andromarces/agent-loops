@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { afterEach, expect, vi } from "vite-plus/test";
@@ -434,6 +434,36 @@ test("an error turn reports the charged step budget from the state file", async 
     status: "error",
     stepsUsed: 1,
     maxSteps: state.maxSteps,
+  });
+});
+
+// Usefulness: verifies acceptance #2066 — when the final state write fails after the charge was
+// saved, the error envelope reports the saved post-charge budget instead of omitting it.
+test("a final state write failure reports the saved post-charge budget", async () => {
+  const repo = await newCleanRunRepo(gitDouble);
+  const paths = statePaths({ cwd: repo });
+  let saved;
+  const worker = {
+    async run() {
+      // The charge write is on disk. Replace the state file with a directory so the final write
+      // fails after that save.
+      saved = JSON.parse(await readFile(paths.stateFile, "utf8"));
+      await rm(paths.stateFile);
+      await mkdir(paths.stateFile);
+      return REPORT;
+    },
+  };
+
+  const result = await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), {
+    agents: { fake1: worker, fake2: recordingAdapter([]) },
+    stdin: stdinPrompt,
+  });
+  expect(saved.stepsUsed).toBe(1);
+  expect(result.exitCode).toBe(1);
+  expect(result.payload).toMatchObject({
+    status: "error",
+    stepsUsed: 1,
+    maxSteps: saved.maxSteps,
   });
 });
 

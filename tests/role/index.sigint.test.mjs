@@ -143,7 +143,8 @@ test.skipIf(process.platform === "win32")(
       });
       const lines = stdout.trim().split("\n");
       expect(lines).toHaveLength(1);
-      expect(JSON.parse(lines[0])).toMatchObject({ status: "error" });
+      // The turn's charge was saved before the child started, so the cancel envelope reports it.
+      expect(JSON.parse(lines[0])).toMatchObject({ status: "error", stepsUsed: 1, maxSteps: 20 });
     } finally {
       if (pid && processExists(pid)) process.kill(pid, "SIGKILL");
       if (child && child.exitCode === null && child.signalCode === null) {
@@ -255,9 +256,17 @@ test("a second SIGINT during a turn writes one complete envelope and the normal 
   try {
     await dispatch.run();
     expect(exit).toHaveBeenCalledWith(130);
-    expect(Buffer.from(bytes).toString("utf8")).toBe(
-      `${JSON.stringify({ status: "error", error: "Interrupted by SIGINT" })}\n`,
+    const forced = Buffer.from(bytes).toString("utf8");
+    expect(forced).toBe(
+      `${JSON.stringify({
+        status: "error",
+        error: "Interrupted by SIGINT",
+        stepsUsed: 1,
+        maxSteps: 20,
+      })}\n`,
     );
+    // The charge was saved before the turn, so the forced envelope reports the persisted budget.
+    expect(JSON.parse(forced)).toMatchObject({ stepsUsed: 1, maxSteps: 20 });
     expect(stdout).not.toHaveBeenCalled();
   } finally {
     stdout.mockRestore();
