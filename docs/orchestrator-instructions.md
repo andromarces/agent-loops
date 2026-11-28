@@ -153,6 +153,12 @@ Example reviewer envelope:
     transient.
   - The capacity reply that each adapter marks is in
     [Supported agents](reference/architecture.md#supported-agents).
+- An error envelope can carry `"refusal": "provider-safety"`. It means the last
+  failure event of the turn was a provider safety refusal. The turn charged its step
+  and gave no review result. An envelope with this field carries no `transient` field.
+  - Do not resend the same prompt.
+  - Ask the maintainer whether to resend a reworded prompt that limits the review method
+    (read code, run existing tests, build no new probe inputs), or abort.
 - A reviewer envelope carries `verdict`: `accept`, `reject`, or `unknown` when
   the required `Verdict:` line is missing or malformed. Treat `unknown` as not
   accepted. Process success never implies acceptance.

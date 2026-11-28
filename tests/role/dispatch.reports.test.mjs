@@ -1290,6 +1290,32 @@ test("reviewer dispatch carries transient in the error envelope only for a flagg
   expect(second.payload).not.toHaveProperty("transient");
 });
 
+// Usefulness: verifies requirement "a Codex provider safety refusal reaches the error envelope
+// with its own class and no transient field" (issue #2056), so a parent never resends the same
+// prompt and never retries it as a capacity outage.
+test("reviewer dispatch carries the provider safety refusal class in the error envelope", async () => {
+  const repo = await newCleanRepo();
+
+  const reviewer = recordingAdapter([
+    () => {
+      throw Object.assign(new Error("codex exited with code 1."), {
+        refusal: "provider-safety",
+      });
+    },
+  ]);
+  await executeRoleCommand(withRepo(dispatchArgv(INIT_OVERRIDES), repo), basicDeps());
+  const deps = { agents: { fake1: recordingAdapter([]), fake2: reviewer }, stdin: stdinPrompt };
+  const result = await executeRoleCommand(withRepo(dispatchArgv([], "reviewer"), repo), deps);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.payload).toMatchObject({
+    role: "reviewer",
+    status: "error",
+    refusal: "provider-safety",
+  });
+  expect(result.payload).not.toHaveProperty("transient");
+});
+
 // Usefulness: verifies requirement "a reviewer turn that leaves a directory in the inherited
 // temporary directory reports its name in the envelope and the state file, and a turn that leaves
 // none carries no field" (issue #1024). The child-turn tests cover the read; only a dispatch

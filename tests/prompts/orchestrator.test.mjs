@@ -1427,6 +1427,34 @@ test("the result prompt carries transient only when the error result has it", ()
   expect(plain).not.toContain("transient");
 });
 
+// Usefulness: verifies requirement "the headless prompt states the provider safety refusal action"
+// (issue #2056, ADR 0148): the result prompt forwards `refusal`, so the headless parent must not
+// resend the same prompt and must abort instead of retrying it.
+test("the headless prompt states the provider safety refusal action", () => {
+  const base = { task: "t", maxSteps: 3 };
+  const prompt = initialPrompt(base);
+  expect(prompt).toContain('"refusal": "provider-safety"');
+  expectRule(
+    prompt,
+    /provider safety refusal/i,
+    /do not resend/i,
+    /\babort\b/i,
+    /provider-safety class/i,
+  );
+
+  const refused = resultPrompt({
+    result: {
+      role: "reviewer",
+      status: "error",
+      error: "codex exited with code 1.",
+      refusal: "provider-safety",
+    },
+    stepsUsed: 1,
+    maxSteps: 3,
+  });
+  expect(refused).toContain('"refusal": "provider-safety"');
+});
+
 // Usefulness: verifies the compare-head prompt states the continuation rule, so the orchestrator
 // of a continued run knows the transcript records the flag but a continuation must pass it again
 // and that omitting it disables the runtime compare (issue #1104). A run without the flag states none.
