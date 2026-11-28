@@ -473,7 +473,21 @@ test("first worker turn requires a clean work tree for PR work", () => {
 test("first worker turn tells the worker to remove temporary files it created outside the work tree", () => {
   const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
   expect(prompt).toContain(
-    "Before the closing block, remove every temporary file or directory that this turn created outside the work tree. Name in Notes any entry that you cannot remove.",
+    "Before the closing block, remove the temporary entries that this turn created outside the work tree.",
+  );
+  expect(prompt).toContain("Name in Notes any entry that you cannot remove.");
+});
+
+// Usefulness: verifies acceptance #2055: a worker that removed the turn temporary directory or
+// the tool output in it lost a command result. The clause names the runtime as the owner of that
+// directory and limits removal to the worker's own scratch entries.
+test("first worker turn keeps cleanup off the turn temporary directory and tool output", () => {
+  const prompt = workerPrompt("do the task", true).replace(/\s+/g, " ");
+  expect(prompt).toContain(
+    "The runtime removes the turn temporary directory that `TMPDIR` names, so never remove that directory or an entry that the coding tool or the runtime created in it.",
+  );
+  expect(prompt).toContain(
+    "Put your own scratch files in your own subdirectory of `TMPDIR`, and remove only the scratch entries that you created yourself.",
   );
 });
 
