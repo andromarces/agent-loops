@@ -210,8 +210,8 @@ function spellings(path, platform, failures, related = () => false) {
 
 /**
  * The temporary roots: yarn dlx uses `os.tmpdir()`, bunx also uses `/tmp`. A Codex turn replaces
- * `os.tmpdir()` with a private directory, so the temporary directories that the turn inherited
- * count too.
+ * `os.tmpdir()` with a private directory when the runtime creates one, so the temporary
+ * directories that the turn inherited count too.
  */
 function temporaryRoots() {
   const { valid, paths } = readInheritedTmpdirs();
