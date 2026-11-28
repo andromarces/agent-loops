@@ -3,7 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { readableErrorText, readProp } from "./error-message.mjs";
-import { AGENT_EFFORTS, AGENT_MODEL_PATTERNS, normalizeAgent } from "./agent-kinds.mjs";
+import { normalizeAgent } from "./agent-kinds.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "./gate-refusal.mjs";
 
 const defaultError = (message) => new Error(message);
@@ -250,29 +250,6 @@ export function openCodeOptionsError(role, kind, model, effort) {
 
   if (effort && model?.includes("#")) {
     return `--${role}-model "${model}" already contains a variant and cannot be combined with --${role}-effort.`;
-  }
-  return null;
-}
-
-/**
- * The model and effort values of a role for a target CLI, validated on a reviewer CLI switch.
- * Applies the OpenCode pair rule and the declared per-CLI model pattern and effort set. A kind
- * with no declared pattern or set, such as a test adapter, is checked by the OpenCode rule only.
- * @returns {string | null} the refusal, or null when the pair is valid
- */
-export function agentOptionsError(role, kind, model, effort) {
-  const openCodeRefusal = openCodeOptionsError(role, kind, model, effort);
-  if (openCodeRefusal) {
-    return openCodeRefusal;
-  }
-  const normalized = normalizeAgent(kind);
-  const pattern = AGENT_MODEL_PATTERNS[normalized];
-  if (model && pattern && !pattern.test(model)) {
-    return `--${role}-model "${model}" is not a model that ${normalized} accepts.`;
-  }
-  const allowed = AGENT_EFFORTS[normalized];
-  if (effort && allowed && !allowed.has(effort)) {
-    return `--${role}-effort "${effort}" is not an effort that ${normalized} accepts.`;
   }
   return null;
 }

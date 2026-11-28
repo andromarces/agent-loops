@@ -17,23 +17,6 @@ const AGENT_KINDS = {
   copilot: { reportsResolvedModel: true, networkedReadOnly: true, waitsForChecks: false },
 };
 
-// The model and effort values that each supported CLI accepts. A value outside the set is refused
-// on a reviewer CLI switch, and the batch parser logs it as a warning. The adapters pass these
-// through, so the agent CLI is the final judge at launch.
-export const AGENT_MODEL_PATTERNS = {
-  claude: /^(?:claude-|opus$|sonnet$|haiku$|fable$)/i,
-  codex: /^(?:gpt-|o\d|codex)/i,
-  copilot: /^(?:gpt-|claude-|o\d|gemini-|opus$|sonnet$|haiku$|auto$)/i,
-  agy: /^gemini-/i,
-  opencode: /^[^\s/]+\/\S+$/,
-};
-export const AGENT_EFFORTS = {
-  claude: new Set(["low", "medium", "high", "xhigh", "max"]),
-  codex: new Set(["minimal", "low", "medium", "high", "xhigh"]),
-  copilot: new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]),
-  agy: new Set(["low", "medium", "high", "xhigh", "max"]),
-};
-
 /** Alias names that a user may pass for an adapter kind, each mapped to that kind. */
 export const AGENT_ALIASES = new Map([["antigravity", "agy"]]);
 

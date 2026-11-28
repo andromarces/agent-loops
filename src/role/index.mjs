@@ -5,12 +5,7 @@
 // envelope per invocation, except `--help`, which prints plain usage. All logs go
 // to stderr.
 import { defaultAgents, normalizeAgent, supportedAgents } from "../agents/index.mjs";
-import {
-  CHILD_ROLE_KINDS,
-  agentOptionsError,
-  openCodeOptionsError,
-  reviewerSandboxError,
-} from "../lib/args.mjs";
+import { CHILD_ROLE_KINDS, openCodeOptionsError, reviewerSandboxError } from "../lib/args.mjs";
 import { REVIEW_ONLY_PR_REFUSAL } from "../lib/gate-refusal.mjs";
 import { DEFAULT_WAIT_SECONDS, waitChecks } from "../lib/checks/check-wait.mjs";
 import { isSpawnedByRun } from "../lib/exec.mjs";
@@ -405,11 +400,9 @@ async function setModel(args, { agents = {} } = {}) {
           }
         }
       }
-      // Validate for the CLI that the next turn runs, not the CLI that the refused turn ran. A
-      // model-only call keeps the init validation and its exact main behavior.
-      const refusal = cliChanged
-        ? agentOptionsError(roleName, nextKind, model, nextEffort)
-        : openCodeOptionsError(roleName, nextKind, model, nextEffort);
+      // Apply the same model and effort rule that init applies for the next CLI. A model or effort
+      // that init only passes through stays accepted on a CLI switch.
+      const refusal = openCodeOptionsError(roleName, nextKind, model, nextEffort);
       if (refusal) {
         throw new RoleError(refusal);
       }

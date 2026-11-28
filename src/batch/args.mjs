@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { access, constants, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, parse, resolve } from "node:path";
 import { supportedAgents } from "../agents/index.mjs";
-import { AGENT_EFFORTS, AGENT_MODEL_PATTERNS, normalizeAgent } from "../lib/agent-kinds.mjs";
+import { normalizeAgent } from "../lib/agent-kinds.mjs";
 import {
   DEFAULT_SETUP_TIMEOUT,
   DEFAULT_TIMEOUT,
@@ -28,6 +28,22 @@ import { normalizeItems } from "./items.mjs";
 const ROLE_FLAGS = roleFlags(ROLE_KINDS);
 const PLACEHOLDERS = new Set(["issue", "title", "branch", "repo"]);
 const MAX_LOOPS = 64;
+
+// The model and effort values that a supported CLI accepts. The adapters pass these through, so a
+// value outside the set logs a warning. The agent CLI refuses a bad value at launch.
+const MODEL_PATTERNS = {
+  claude: /^(?:claude-|opus$|sonnet$|haiku$|fable$)/i,
+  codex: /^(?:gpt-|o\d|codex)/i,
+  copilot: /^(?:gpt-|claude-|o\d|gemini-|opus$|sonnet$|haiku$|auto$)/i,
+  agy: /^gemini-/i,
+  opencode: /^[^\s/]+\/\S+$/,
+};
+const EFFORTS = {
+  claude: new Set(["low", "medium", "high", "xhigh", "max"]),
+  codex: new Set(["minimal", "low", "medium", "high", "xhigh"]),
+  copilot: new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]),
+  agy: new Set(["low", "medium", "high", "xhigh", "max"]),
+};
 
 export const DEFAULT_TASK_TEMPLATE = [
   "Work on issue {issue} of {repo}.",
@@ -268,10 +284,10 @@ function roleOptionWarningsFor(role, kind, model, effort) {
   const normalized = kind === null ? null : normalizeAgent(kind);
   if (normalized === null) return [];
   const warnings = [];
-  if (model !== null && !(AGENT_MODEL_PATTERNS[normalized]?.test(model) ?? true)) {
+  if (model !== null && !(MODEL_PATTERNS[normalized]?.test(model) ?? true)) {
     warnings.push(`Unknown ${role} model: ${model}. The agent CLI refuses a bad value at launch.`);
   }
-  const allowed = AGENT_EFFORTS[normalized];
+  const allowed = EFFORTS[normalized];
   if (effort !== null && allowed !== undefined && !allowed.has(effort)) {
     warnings.push(
       `Unknown ${role} effort: ${effort}. The agent CLI refuses a bad value at launch.`,

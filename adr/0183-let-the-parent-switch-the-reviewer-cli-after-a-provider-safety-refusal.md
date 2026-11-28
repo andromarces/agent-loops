@@ -11,9 +11,10 @@ This ADR partially supersedes
 The replaced parts are decision 6's rule that `--reviewer` cannot change after init and that only
 the model moves on this path, the consequence that names only another model, the consequence that
 names only the model switch in the orchestrator instructions, alternative 1's rejection of a CLI
-switch because `--reviewer` is an init field, and alternative 5's rule that only a model change
-clears the session. Each replaced part applies only to the reviewer
-whose latest turn is a `provider-safety` refusal. Every other decision, consequence, and
+switch because `--reviewer` is an init field, alternative 5's rule that only a model change
+clears the session, and decision 5's no-write promise as it applies to a request that also changes
+the CLI. Each replaced part applies only to the reviewer whose latest turn is a `provider-safety`
+refusal. Every other decision, consequence, and
 alternative of ADR 0180 stays in force.
 
 ## Date
@@ -40,13 +41,15 @@ CLI switch loses no review work.
    is still required, so a CLI switch always names the model that the new CLI runs, and an omitted
    effort clears the role's effort. The option is accepted only when the latest reviewer turn is a
    `provider-safety` refusal, with or without an earlier `ok` turn.
-2. **Validate for the new CLI.** The new code path refuses an unknown or unsupported CLI, a model
-   or effort value outside the target CLI's declared model pattern and effort set, and an OpenCode
-   model and effort pair that init refuses. It also reuses the init reviewer sandbox check: a stored
-   `read-only` or `workspace-write` sandbox refuses a target other than Codex, and the refusal
-   names `--reviewer-sandbox`, because the new CLI would drop that containment. A stored `none`
-   sandbox holds no containment and is cleared on the switch, so no stored Codex option remains for
-   the new CLI. A model-only call keeps the init check and the current role's CLI.
+2. **Validate like init.** The new code path refuses an unknown or unsupported CLI and applies the
+   same model and effort rule that init applies for the target CLI, the OpenCode pair rule. A model
+   or effort that init passes through, including one that the batch parser only warns about, is
+   accepted; ADR 0049 records working Copilot turns with `mai-code-1.1-flash`. It also reuses the
+   init reviewer sandbox check: a stored `read-only` or
+   `workspace-write` sandbox refuses a target other than Codex, and the refusal names
+   `--reviewer-sandbox`, because the new CLI would drop that containment. A stored `none` sandbox
+   holds no containment and is cleared on the switch, so no stored Codex option remains for the new
+   CLI. A model-only call keeps the init check and the current role's CLI.
 3. **Start a new reviewer session.** A successful CLI switch clears the reviewer `sessionId`, its
    `sessionUnconfirmed` mark, and its `conversationReplaced` mark, whether or not the model also
    changed. The next reviewer dispatch runs the new CLI in a new conversation and shows the init
@@ -109,6 +112,7 @@ Andro Marces
 - [ADR 0008: Keep the turn history in the state file](0008-state-file-turn-history.md)
 - [ADR 0084: Charge no step for a first Codex turn that a model refusal ends](0084-charge-no-step-for-a-first-codex-turn-that-a-model-refusal-ends.md)
 - [ADR 0038: Run the Codex reviewer with no sandbox by default](0038-run-the-codex-reviewer-with-no-sandbox-by-default.md)
+- [ADR 0049: Pin the machine-wide roots for every child turn](0049-pin-the-machine-wide-roots-for-every-child-turn.md)
 - Implementation: `setModel` in `src/role/index.mjs`, `rejectInitFlagChanges` in `src/role/args.mjs`
 - Tests: `tests/role/index.set-model.test.mjs`
 - Docs: `docs/orchestrator-instructions.md`, `docs/reference/role.md`, `src/help.mjs`, `src/prompts/orchestrator.mjs`

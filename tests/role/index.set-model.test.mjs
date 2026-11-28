@@ -701,29 +701,28 @@ test("set-model refuses a CLI switch that would drop a stored reviewer sandbox",
   expect(await readRepoState(repo)).toEqual(before);
 });
 
-// Usefulness: verifies a CLI switch validates the model and effort for the target CLI, not only
-// the OpenCode option pairing, and writes nothing when a value is invalid.
-test("set-model refuses a CLI change with an invalid model or effort for the target CLI", async () => {
+// Usefulness: verifies the CLI-switch path applies init's model rule, so a Copilot model that init
+// accepts is not refused by a stricter pattern check (ADR 0049).
+test("set-model accepts a Copilot model that init accepts", async () => {
   const { repo } = await startSafetyRefusedReviewerRun();
-  const before = await readRepoState(repo);
 
-  const invalidModel = await setModel(repo, "--reviewer", "copilot", "--reviewer-model", "nope");
-  expect(invalidModel.exitCode).toBe(1);
-  expect(invalidModel.payload.error).toContain("--reviewer-model");
-  expect(await readRepoState(repo)).toEqual(before);
-
-  const invalidEffort = await setModel(
+  const changed = await setModel(
     repo,
     "--reviewer",
     "copilot",
     "--reviewer-model",
-    "gpt-5",
-    "--reviewer-effort",
-    "extreme",
+    "mai-code-1.1-flash",
   );
-  expect(invalidEffort.exitCode).toBe(1);
-  expect(invalidEffort.payload.error).toContain("--reviewer-effort");
-  expect(await readRepoState(repo)).toEqual(before);
+  expect(changed.exitCode).toBe(0);
+  const after = await readRepoState(repo);
+  expect(after.roles.reviewer).toMatchObject({
+    kind: "copilot",
+    model: "mai-code-1.1-flash",
+    sessionId: null,
+  });
+  expect(after.cliChanges).toEqual([
+    { role: "reviewer", from: "fake2", to: "copilot", at: expect.any(String) },
+  ]);
 });
 
 // Usefulness: verifies a --reviewer value that names the current CLI follows the model-only path,

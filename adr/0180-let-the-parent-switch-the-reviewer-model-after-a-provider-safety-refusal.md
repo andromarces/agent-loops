@@ -4,7 +4,7 @@
 
 partially-superseded
 
-Superseded by [ADR 0183: Let the parent switch the reviewer CLI after a provider-safety refusal](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md). The superseded part is decision 6's rule that `--reviewer` cannot change after init and that only the model moves, the consequence that names only another model, the consequence that names only the model switch in the orchestrator instructions, alternative 1's rejection of a CLI switch because `--reviewer` is an init field, and alternative 5's rule that only a model change clears the session. Each replaced part applies only to the reviewer whose latest turn is a `provider-safety` refusal. Every other part stays in force: the exception itself, the new-session rule, the recorded `modelChanges` entry, the guard list, and every other consequence and alternative.
+Superseded by [ADR 0183: Let the parent switch the reviewer CLI after a provider-safety refusal](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md). The superseded part is decision 6's rule that `--reviewer` cannot change after init and that only the model moves, the consequence that names only another model, the consequence that names only the model switch in the orchestrator instructions, alternative 1's rejection of a CLI switch because `--reviewer` is an init field, alternative 5's rule that only a model change clears the session, and decision 5's no-write promise as it applies to a request that also changes the CLI. Each replaced part applies only to the reviewer whose latest turn is a `provider-safety` refusal. Every other part stays in force: the exception itself, the new-session rule, the recorded `modelChanges` entry, the guard list, and every other consequence and alternative.
 
 ## Supersedes
 
@@ -66,8 +66,12 @@ The refusal therefore needs a new session on that path too, not only after an `o
 5. **Keep every other guard.** Exactly one model flag is required; the run is `active`; the caller
    passes the stored `--parent-session` id; a child role is refused through the
    `AGENT_LOOP_SPAWNED_RUN` marker; the role is configured; a run with no turn history is refused;
-   the OpenCode model and effort pair stays valid; and a request for the current model succeeds with
-   no history entry and no state write, so it does not reset the session.
+   the OpenCode model and effort pair stays valid; and a model-only request for the current model
+   succeeds with no history entry and no state write, so it does not reset the session. Superseded
+   in part by
+   [ADR 0183](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md): a
+   CLI change with the same model string is a change, and it is recorded in `cliChanges`. The
+   model-only request keeps this promise.
 6. **The CLI stays an init field.** `--reviewer` cannot change after init. Only the model moves on
    this path. Superseded by [ADR 0183](0183-let-the-parent-switch-the-reviewer-cli-after-a-provider-safety-refusal.md):
    on this path `role set-model` may also change the reviewer CLI, with its model and effort, on
