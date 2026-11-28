@@ -203,6 +203,20 @@ export function markCapacityFailure(err) {
   err.transient = "capacity";
 }
 
+/**
+ * Marks a failed turn as a provider safety refusal, so a parent asks about a reworded prompt instead
+ * of resending the same one. The mark is never `transient`, because a retry of the same prompt is
+ * likely to be refused again. A turn that timed out, was canceled, or ended on a signal fails for
+ * another reason, so it is never marked. The caller names the terminal event that decides.
+ * @param {unknown} err the error `exec` threw
+ */
+export function markProviderSafetyRefusal(err) {
+  if (failedForAnotherReason(err)) {
+    return;
+  }
+  err.refusal = "provider-safety";
+}
+
 export function byteLength(text) {
   return Buffer.byteLength(text ?? "");
 }

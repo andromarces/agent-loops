@@ -705,6 +705,7 @@ export function resultPrompt({
     // A headless parent holds what a `role dispatch` envelope carries.
     ...turnResultFields(result, [
       "transient",
+      "refusal",
       "reviewed",
       "workTree",
       "prChecks",

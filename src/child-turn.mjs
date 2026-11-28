@@ -157,7 +157,7 @@ export async function runProbeTurn({
  *     reportOutsideBlockLabels?: string[], reportCopiedTaskLabels?: string[],
  *     shellDenied?: true, multiPartUnidentified?: true, reviewed?: object, workTree?: object, prChecks?: object } &
  *   TurnEvidence |
- *   { role: string, status: "error", error: string, transient?: string, refusedModel?: string } & TurnEvidence
+ *   { role: string, status: "error", error: string, transient?: string, refusal?: string, refusedModel?: string } & TurnEvidence
  * >}
  */
 export async function runChild(options) {
@@ -657,6 +657,9 @@ export async function runChild(options) {
     }
     // An adapter marks a failure the provider is expected to clear.
     const transient = readProp(err, "transient");
+    // An adapter marks a provider refusal that the same prompt cannot clear, such as a safety
+    // refusal.
+    const refusal = readProp(err, "refusal");
     // An adapter marks a model that the CLI refused, so a first turn can be refunded and repaired
     // with `role set-model`.
     const refusedModel = readProp(err, "refusedModel");
@@ -665,6 +668,7 @@ export async function runChild(options) {
       status: "error",
       error: errorMessage,
       ...(typeof transient === "string" ? { transient } : {}),
+      ...(typeof refusal === "string" ? { refusal } : {}),
       ...(typeof refusedModel === "string" ? { refusedModel } : {}),
       ...pickTurnEvidence({ ...failedEvidence, testRun }),
     };

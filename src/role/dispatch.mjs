@@ -725,7 +725,12 @@ function dispatchPayload(roleName, result) {
       role: roleName,
       status: "error",
       error: result.error,
-      ...turnResultFields(result, ["transient", "refusedModel", ...TURN_EVIDENCE_FIELDS]),
+      ...turnResultFields(result, [
+        "transient",
+        "refusal",
+        "refusedModel",
+        ...TURN_EVIDENCE_FIELDS,
+      ]),
     };
   }
   const report = result.report;

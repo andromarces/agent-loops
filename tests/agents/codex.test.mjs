@@ -562,6 +562,54 @@ test.each([
   expect(caught.transient).toBeUndefined();
 });
 
+const SAFETY_REFUSAL =
+  "This content was flagged for possible cybersecurity risk. Please try a different request.";
+
+// Usefulness: verifies requirement "a Codex provider safety refusal carries its own class" (issue #2056), so a parent asks about a reworded prompt instead of resending the same one; the thread id of the failed turn is still kept.
+test.each([
+  [
+    "both events",
+    [
+      { type: "error", message: SAFETY_REFUSAL },
+      { type: "turn.failed", error: { message: SAFETY_REFUSAL } },
+    ],
+  ],
+  ["the turn.failed event alone", [{ type: "turn.failed", error: { message: SAFETY_REFUSAL } }]],
+  ["the error event alone", [{ type: "error", message: SAFETY_REFUSAL }]],
+])("codex marks a provider safety refusal from %s", async (_name, events) => {
+  const stdout = [{ type: "thread.started", thread_id: "th-safety" }, ...events]
+    .map((event) => JSON.stringify(event))
+    .join("\n");
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("codex exited with code 1."), { exitCode: 1, stdout, stderr: "" }),
+  );
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+  expect(caught.refusal).toBe("provider-safety");
+  expect(caught.transient).toBeUndefined();
+  expect(state.sessionId).toBe("th-safety");
+});
+
+// Usefulness: verifies a capacity failure and a generic failure carry no safety class (issue #2056), so the new mark never changes their envelopes.
+test.each([
+  ["capacity", capacityStdout(), "capacity"],
+  [
+    "a generic failure",
+    JSON.stringify({ type: "turn.failed", error: { message: "Authentication failed" } }),
+    undefined,
+  ],
+])("codex keeps %s unchanged by the safety class", async (_name, stdout, transient) => {
+  vi.mocked(exec).mockRejectedValueOnce(
+    Object.assign(new Error("codex exited with code 1."), { exitCode: 1, stdout, stderr: "" }),
+  );
+
+  const state = { kind: "codex", sessionId: null, model: null, effort: null };
+  const caught = await runCodex(state, "p", { cwd: "/dir" }).catch((e) => e);
+  expect(caught.refusal).toBeUndefined();
+  expect(caught.transient).toBe(transient);
+});
+
 // Usefulness: verifies requirement "only a turn whose terminal failure is the capacity reply is marked transient" (issue #1012): an earlier capacity event followed by another terminal cause must not make a parent retry a real fault.
 test.each([
   [

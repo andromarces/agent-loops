@@ -14,6 +14,7 @@ import {
   isModelId,
   keepFailedSessionId,
   markCapacityFailure,
+  markProviderSafetyRefusal,
   setMainLoopUsage,
   turnExecOptions,
 } from "./shared.mjs";
@@ -24,6 +25,9 @@ const missingSession = (id) =>
 
 // Codex reports this model capacity reply in an `error` event and a `turn.failed` event.
 const CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model.";
+
+// Codex reports this provider safety refusal in a terminal `error` or `turn.failed` event.
+const SAFETY_REFUSAL = "This content was flagged for possible cybersecurity risk";
 
 // Codex reports a model it refuses in a `turn.failed` event, for example
 // `The 'gpt-6.1' model is not supported when using Codex with a ChatGPT account.`
@@ -56,6 +60,17 @@ function terminalFailureMessage(events) {
 function flagCapacityFailure(err, events) {
   if (terminalFailureMessage(events) === CAPACITY_MESSAGE) {
     markCapacityFailure(err);
+  }
+}
+
+/**
+ * Marks a failed turn whose terminal failure is the provider safety refusal with its own class, so a
+ * parent asks about a reworded prompt instead of resending the same one. The class is never
+ * `transient`. A timeout, cancel, or signal ends the turn for another reason, so it is never marked.
+ */
+function flagSafetyRefusal(err, events) {
+  if (terminalFailureMessage(events).includes(SAFETY_REFUSAL)) {
+    markProviderSafetyRefusal(err);
   }
 }
 
@@ -162,6 +177,7 @@ export async function runCodex(state, prompt, options = {}) {
       throw err;
     }
     flagCapacityFailure(err, failedEvents);
+    flagSafetyRefusal(err, failedEvents);
     flagModelRefusal(err, failedEvents);
     flagMissingSession(err, requestedSessionId, missingSession);
     // Only an `exec` failure carries the message that this adapter bounds. Any other error, such
