@@ -1,7 +1,13 @@
 import { execa } from "execa";
 import { expect, test } from "vite-plus/test";
 import { parseReportBlock } from "../../src/lib/report.mjs";
-import { initTaskBlock, redRunRule, reportBlock, testSlotRule } from "../../src/prompts/rules.mjs";
+import {
+  closingBlockRepairPrompt,
+  initTaskBlock,
+  redRunRule,
+  reportBlock,
+  testSlotRule,
+} from "../../src/prompts/rules.mjs";
 
 // The full-suite rule of every worker and reviewer turn (issue #848, ADR 0040).
 
@@ -234,6 +240,12 @@ test("the closing-block rule states the one-blank-line list fold", () => {
   );
   expect(reportBlock).toMatch(/A section is a bare dash list, or a prose lead with its dash list/);
   expect(reportBlock).toMatch(
+    /A run under one label folds when a plain prose paragraph with no list is followed by a plain prose lead with its dash list: the paragraph joins as `; <prose>`, and its lines join with a space\./,
+  );
+  expect(reportBlock).toMatch(
+    /The run needs that plain prose lead\. A paragraph followed by a bare dash list and no prose lead, a horizontal rule, and a bold lead start no such run\. A two-line paragraph after the lead, followed by a separate bare dash list, also starts no such run\./,
+  );
+  expect(reportBlock).toMatch(
     /The lead follows the prose-lead rules, the whole-line bold heading included/,
   );
   expect(reportBlock).toMatch(/Two blank lines, or no blank line before it, start no new section/);
@@ -353,6 +365,16 @@ test("the closing-block rule puts quoted or multi-paragraph text before the bloc
     "Deferred: none",
   ].join("\n");
   expect(parseReportBlock(response)).toBeNull();
+});
+
+// Usefulness: verifies requirement "the repair prompt states that Conclusion and Why come first"
+// (issue #2069). The repair of that shape keeps the same values in canonical order, so the prompt
+// names the order for a worker and a reviewer.
+test("the repair prompt states that Conclusion and Why come first", () => {
+  for (const reviewer of [false, true]) {
+    const prompt = closingBlockRepairPrompt({ reviewer }).replace(/\s+/g, " ");
+    expect(prompt).toContain("Put `Conclusion:` and `Why:` first, in that order.");
+  }
 });
 
 // Usefulness: verifies the issue #1380 rule forbids only the two observed shapes. A general
