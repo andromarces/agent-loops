@@ -273,12 +273,16 @@ test("later worker turns state that TMPDIR changes every turn", () => {
 });
 
 // Usefulness: verifies acceptance #2055 for a resumed worker turn, which gets no preamble and can
-// continue a session that started before the clause. The repeated sentences keep the same ownership
-// and name the one directory that the runtime removes.
+// continue a session that started before the clause. The repeated sentences carry the complete rule:
+// the same ownership, the scratch-subdirectory fallback, and the one directory that the runtime
+// removes.
 test("later worker turns keep cleanup off the turn temporary directory", () => {
   const prompt = workerPrompt("fix the reviewer finding", false).replace(/\s+/g, " ");
   expect(prompt).toContain(
     "Never remove the directory that `TMPDIR`, `TEMP`, or `TMP` names, or an entry in it that the coding tool or the runtime created.",
+  );
+  expect(prompt).toContain(
+    "Put your own scratch files in a subdirectory of it that you create and remove only that subdirectory, or, when you cannot create it, put the scratch files directly in that directory and remove only those files.",
   );
   expect(prompt).toContain("The runtime removes only the private turn directory that it created.");
 });

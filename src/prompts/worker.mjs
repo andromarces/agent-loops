@@ -108,10 +108,9 @@ const laterTurnTmpdirRule =
   "`TMPDIR` names a new private directory on every turn, so read it again, and never reuse a temporary path from an earlier turn.";
 
 // A resumed session can hold a conversation that started before the turn-directory clause, so every
-// later turn repeats its no-removal half and the one directory that the runtime removes next to the
-// temporary-path rule.
+// later turn repeats the complete rule next to the temporary-path rule.
 const laterTurnTempRemovalRule =
-  "Never remove the directory that `TMPDIR`, `TEMP`, or `TMP` names, or an entry in it that the coding tool or the runtime created. The runtime removes only the private turn directory that it created.";
+  "Never remove the directory that `TMPDIR`, `TEMP`, or `TMP` names, or an entry in it that the coding tool or the runtime created. Put your own scratch files in a subdirectory of it that you create and remove only that subdirectory, or, when you cannot create it, put the scratch files directly in that directory and remove only those files. The runtime removes only the private turn directory that it created.";
 
 /**
  * Builds a worker turn prompt. `firstTurn` adds the full preamble. A later turn gets a shorter
