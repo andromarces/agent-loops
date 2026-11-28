@@ -50,7 +50,7 @@ Andro Marces
 ## Links
 
 - [Issue #2069](https://github.com/andromarces/agent-loops/issues/2069)
-- [PR #2073: Fold a prose section with no list and repair a reordered closing block](https://github.com/andromarces/agent-loops/pull/2073)
+- [PR #2073: Fold a prose section with no list and bar a reordered closing block](https://github.com/andromarces/agent-loops/pull/2073)
 - [ADR 0167: Fold a second dash list and a prose line under one closing-block label](0167-fold-a-second-dash-list-and-prose-line-under-one-label.md)
 - [ADR 0168: Fold a closing-block list item that opens with a plain label name](0168-fold-a-plain-label-list-item.md)
 - [ADR 0094: Repair a null child closing block once in the same session](0094-repair-a-null-child-closing-block.md)
